@@ -1,6 +1,6 @@
 import { play, pause, stop } from '../audio/engine.js';
 
-export default function TransportControls({ onPlayStateChange }) {
+export default function TransportControls({ isPlaying, onPlayStateChange }) {
   function handlePlay() {
     play();
     onPlayStateChange(true);
@@ -18,9 +18,9 @@ export default function TransportControls({ onPlayStateChange }) {
 
   return (
     <div className="transport-controls">
-      <button onClick={handlePlay}>Play</button>
-      <button onClick={handlePause}>Pause</button>
-      <button onClick={handleStop}>Stop</button>
+      <button onClick={handlePlay} disabled={isPlaying}>Play</button>
+      <button onClick={handlePause} disabled={!isPlaying}>Pause</button>
+      <button onClick={handleStop} disabled={!isPlaying}>Stop</button>
     </div>
   );
 }
