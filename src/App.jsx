@@ -34,7 +34,7 @@ function App() {
 
       {fileMeta && (
         <>
-          <TransportControls onPlayStateChange={setIsPlaying} />
+          <TransportControls isPlaying={isPlaying} onPlayStateChange={setIsPlaying} />
           <WaveformDisplay />
           <SpectrumAnalyser isPlaying={isPlaying} />
         </>

@@ -1,19 +1,33 @@
 import { useEffect, useRef } from 'react';
-import { getAnalyserData, getIsPlaying } from '../audio/engine.js';
+import { getAnalyserData } from '../audio/engine.js';
 
 export default function SpectrumAnalyser({ isPlaying }) {
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const animFrameRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    function syncSize() {
+      const rect = container.getBoundingClientRect();
+      canvas.width = Math.floor(rect.width);
+      canvas.height = 200;
+    }
+
+    syncSize();
+    const observer = new ResizeObserver(() => syncSize());
+    observer.observe(container);
+
     const ctx = canvas.getContext('2d');
-    const width = canvas.width;
-    const height = canvas.height;
 
     function draw() {
+      const width = canvas.width;
+      const height = canvas.height;
       const data = getAnalyserData();
+
       ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = '#1a1a2e';
       ctx.fillRect(0, 0, width, height);
@@ -41,12 +55,15 @@ export default function SpectrumAnalyser({ isPlaying }) {
         cancelAnimationFrame(animFrameRef.current);
         animFrameRef.current = null;
       }
+      const width = canvas.width;
+      const height = canvas.height;
       ctx.clearRect(0, 0, width, height);
       ctx.fillStyle = '#1a1a2e';
       ctx.fillRect(0, 0, width, height);
     }
 
     return () => {
+      observer.disconnect();
       if (animFrameRef.current) {
         cancelAnimationFrame(animFrameRef.current);
       }
@@ -55,7 +72,10 @@ export default function SpectrumAnalyser({ isPlaying }) {
 
   return (
     <div className="spectrum-analyser">
-      <canvas ref={canvasRef} width={800} height={200} />
+      <h3 className="section-label">Spectrum</h3>
+      <div ref={containerRef} className="canvas-container">
+        <canvas ref={canvasRef} height={200} />
+      </div>
     </div>
   );
 }
