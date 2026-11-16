@@ -1,8 +1,7 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { decodeFile } from '../audio/engine.js';
 
 export default function FileLoader({ onFileLoaded }) {
-  const inputRef = useRef(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
@@ -22,6 +21,7 @@ export default function FileLoader({ onFileLoaded }) {
       onFileLoaded(null);
     } finally {
       setLoading(false);
+      e.target.value = ''; // allow re-loading the same file
     }
   }
 
@@ -29,10 +29,9 @@ export default function FileLoader({ onFileLoaded }) {
     <div className="file-loader">
       <label htmlFor="audio-file">Load audio file:</label>
       <input
-        ref={inputRef}
         id="audio-file"
         type="file"
-        accept=".wav,.mp3"
+        accept=".wav,.mp3,audio/wav,audio/mpeg"
         onChange={handleChange}
         disabled={loading}
       />

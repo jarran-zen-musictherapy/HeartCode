@@ -20,7 +20,8 @@ export default function TransportControls({ isPlaying, onPlayStateChange }) {
     <div className="transport-controls">
       <button onClick={handlePlay} disabled={isPlaying}>Play</button>
       <button onClick={handlePause} disabled={!isPlaying}>Pause</button>
-      <button onClick={handleStop} disabled={!isPlaying}>Stop</button>
+      {/* Stop stays enabled while paused so you can return to the start. */}
+      <button onClick={handleStop}>Stop</button>
     </div>
   );
 }
