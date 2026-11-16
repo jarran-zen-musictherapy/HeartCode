@@ -400,3 +400,55 @@ button.secondary {
 }
 
 .meter-value small { color: #888; }
+
+.wave-main {
+  touch-action: none;
+  cursor: crosshair;
+  border-radius: 4px 4px 0 0 !important;
+}
+
+.wave-main:focus-visible {
+  outline: 2px solid #00d4ff;
+  outline-offset: 1px;
+}
+
+.wave-mini {
+  touch-action: none;
+  cursor: ew-resize;
+  border-radius: 0 0 4px 4px !important;
+}
+
+.zoom-buttons {
+  display: inline-flex;
+  gap: 0.25rem;
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.zoom-buttons button {
+  padding: 0.15rem 0.6rem;
+  font-size: 0.8rem;
+  min-width: 2rem;
+}
+
+.drop-zone {
+  border: 1px dashed #333;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+}
+
+.drop-zone.over {
+  border-color: #00d4ff;
+  background: #16213e;
+}
+
+.drop-hint {
+  color: #888;
+  font-size: 0.8rem;
+}
+
+button.secondary.inline {
+  margin-top: 0;
+  margin-left: auto;
+}

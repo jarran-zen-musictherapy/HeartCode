@@ -5,13 +5,12 @@ export default function FileLoader({ onFileLoaded }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
-  async function handleChange(e) {
-    const file = e.target.files[0];
-    if (!file) return;
+  const [over, setOver] = useState(false);
 
+  async function loadFile(file) {
+    if (!file) return;
     setLoading(true);
     setError(null);
-
     try {
       const meta = await decodeFile(file);
       onFileLoaded({ name: file.name, ...meta });
@@ -21,12 +20,28 @@ export default function FileLoader({ onFileLoaded }) {
       onFileLoaded(null);
     } finally {
       setLoading(false);
-      e.target.value = ''; // allow re-loading the same file
     }
   }
 
+  async function handleChange(e) {
+    const input = e.target;
+    await loadFile(input.files[0]);
+    input.value = ''; // allow re-loading the same file
+  }
+
+  function handleDrop(e) {
+    e.preventDefault();
+    setOver(false);
+    if (!loading) loadFile(e.dataTransfer.files[0]);
+  }
+
   return (
-    <div className="file-loader">
+    <div
+      className={`file-loader drop-zone${over ? ' over' : ''}`}
+      onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+      onDragLeave={() => setOver(false)}
+      onDrop={handleDrop}
+    >
       <label htmlFor="audio-file">Load a recording (audio file or screen recording):</label>
       <input
         id="audio-file"
@@ -35,6 +50,7 @@ export default function FileLoader({ onFileLoaded }) {
         onChange={handleChange}
         disabled={loading}
       />
+      <span className="drop-hint">or drop a file here. Video files are fine: only the sound is used.</span>
       {loading && <span className="loading-text">Decoding…</span>}
       {error && <span className="error-text">{error}</span>}
     </div>

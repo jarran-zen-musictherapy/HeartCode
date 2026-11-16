@@ -7,6 +7,7 @@ import AnalysisPanel from './components/AnalysisPanel.jsx';
 import GridPanel from './components/GridPanel.jsx';
 import { getAnalysisData, onEnded } from './audio/engine.js';
 import { analyseHeartbeat } from './analysis/detect.js';
+import { encodeWav } from './export/wavEncode.js';
 
 function App() {
   const [fileMeta, setFileMeta] = useState(null);
@@ -41,6 +42,20 @@ function App() {
     setFileVersion((v) => v + 1);
   }
 
+  // Save the sound on its own, e.g. the audio track of a screen recording.
+  function saveAudio() {
+    const data = getAnalysisData();
+    if (!data) return;
+    const url = URL.createObjectURL(new Blob([encodeWav(data.pcm, data.sampleRate, 24)], { type: 'audio/wav' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${fileMeta.name.replace(/\.[^.]+$/, '')}_audio.wav`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
   return (
     <div className="app">
       <h1>HeartCode</h1>
@@ -61,6 +76,7 @@ function App() {
           {fileMeta.nativeRate && fileMeta.sampleRate === 4000 && (
             <span className="badge">Littmann CORE profile detected</span>
           )}
+          <button className="secondary inline" onClick={saveAudio}>Save audio as .wav</button>
         </div>
       )}
 
