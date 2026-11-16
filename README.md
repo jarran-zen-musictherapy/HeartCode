@@ -63,6 +63,11 @@ npm run build:standalone  # one HTML file that opens by double-click
 * `src/analysis/cleanup.js` detects 50/60 Hz mains hum and removes it with narrow
   notch filters (for the analysis always, for the export when Clean-up is on), and
   provides the rumble and hiss cuts.
+* `src/process/` is the tone and level chain applied to previews and exports: EQ
+  (low cut, low shelf, two bells, high shelf, high cut), then gain, then a look-ahead
+  brickwall limiter as the last stage. Meters follow ITU-R BS.1770 (integrated LUFS
+  with gating, true peak). The EQ runs as ordinary causal filters, so the curve on
+  screen is exactly what is applied.
 * `src/export/` writes 24-bit WAV files, a plain zip for the one-shots, a MIDI file
   (S1 on C1 on every beat, S2 on D1 at its natural offset) and a beat-by-beat CSV.
 
@@ -70,7 +75,8 @@ npm run build:standalone  # one HTML file that opens by double-click
 
 * **Phase 1 (done):** core engine: file loader, waveform, transport, spectrum.
 * **Phase 2 (done):** analysis: S1/S2 detection, BPM, beat-interval variability.
-* **Phase 3:** processing: parametric EQ, compressor.
+* **Phase 3 (done):** tone and level: parametric EQ with a before/after spectrum, gain,
+  look-ahead limiter, true-peak and LUFS meters.
 * **Phase 4 (done):** grid warp: each heartbeat placed on a tempo grid.
 * **Phase 5 (done):** export: loop as WAV, one-shot slices as a zip.
 

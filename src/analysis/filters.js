@@ -1,23 +1,53 @@
 // Small DSP toolkit: pure functions on typed arrays, no browser APIs,
 // so everything here runs (and is tested) in Node as well as the browser.
 
-/** RBJ cookbook biquad coefficients, normalised so a0 = 1. */
-export function biquad(type, fs, f0, Q = Math.SQRT1_2) {
+/**
+ * RBJ cookbook biquad coefficients, normalised so a0 = 1.
+ * Types: lowpass, highpass, notch, peaking, lowshelf, highshelf.
+ * `gainDb` applies to peaking and shelf types only.
+ */
+export function biquad(type, fs, f0, Q = Math.SQRT1_2, gainDb = 0) {
   const w0 = (2 * Math.PI * f0) / fs;
   const cos = Math.cos(w0);
-  const alpha = Math.sin(w0) / (2 * Q);
-  let b0; let b1; let b2;
+  const sin = Math.sin(w0);
+  const alpha = sin / (2 * Q);
+  const A = 10 ** (gainDb / 40);
+  let b0; let b1; let b2; let a0; let a1; let a2;
   if (type === 'lowpass') {
     b1 = 1 - cos; b0 = b1 / 2; b2 = b0;
+    a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha;
   } else if (type === 'highpass') {
     b1 = -(1 + cos); b0 = (1 + cos) / 2; b2 = b0;
+    a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha;
   } else if (type === 'notch') {
     b0 = 1; b1 = -2 * cos; b2 = 1;
+    a0 = 1 + alpha; a1 = -2 * cos; a2 = 1 - alpha;
+  } else if (type === 'peaking') {
+    b0 = 1 + alpha * A; b1 = -2 * cos; b2 = 1 - alpha * A;
+    a0 = 1 + alpha / A; a1 = -2 * cos; a2 = 1 - alpha / A;
+  } else if (type === 'lowshelf' || type === 'highshelf') {
+    const k = 2 * Math.sqrt(A) * (sin / 2) * Math.SQRT2; // shelf slope S = 1
+    const sign = type === 'lowshelf' ? 1 : -1;
+    b0 = A * ((A + 1) - sign * (A - 1) * cos + k);
+    b1 = sign * 2 * A * ((A - 1) - sign * (A + 1) * cos);
+    b2 = A * ((A + 1) - sign * (A - 1) * cos - k);
+    a0 = (A + 1) + sign * (A - 1) * cos + k;
+    a1 = -sign * 2 * ((A - 1) + sign * (A + 1) * cos);
+    a2 = (A + 1) + sign * (A - 1) * cos - k;
   } else {
     throw new Error(`Unsupported biquad type: ${type}`);
   }
-  const a0 = 1 + alpha;
-  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: (-2 * cos) / a0, a2: (1 - alpha) / a0 };
+  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+}
+
+/** Gain of a biquad at frequency f, in dB. */
+export function biquadGainDb(c, fs, f) {
+  const w = (2 * Math.PI * f) / fs;
+  const c1 = Math.cos(w); const s1 = Math.sin(w);
+  const c2 = Math.cos(2 * w); const s2 = Math.sin(2 * w);
+  const nr = c.b0 + c.b1 * c1 + c.b2 * c2; const ni = -(c.b1 * s1 + c.b2 * s2);
+  const dr = 1 + c.a1 * c1 + c.a2 * c2; const di = -(c.a1 * s1 + c.a2 * s2);
+  return 10 * Math.log10((nr * nr + ni * ni) / (dr * dr + di * di) + 1e-30);
 }
 
 function runBiquad(x, c, reverse) {
@@ -32,6 +62,11 @@ function runBiquad(x, c, reverse) {
     y[i] = yi;
   }
   return y;
+}
+
+/** Ordinary (causal) filtering, as a hardware or plugin EQ would do it. */
+export function applyBiquad(x, c) {
+  return runBiquad(x, c, false);
 }
 
 /** Zero-phase filtering (forward then backward), so event timing is not shifted. */

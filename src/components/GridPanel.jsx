@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { getAnalysisData, startPreview, stopPreview, onPreviewChange } from '../audio/engine.js';
 import { resample } from '../analysis/resample.js';
-import { gridWarp, sliceBeats, normaliseGain, addClicks } from '../analysis/gridwarp.js';
+import { gridWarp, sliceBeats, addClicks } from '../analysis/gridwarp.js';
 import { encodeWav } from '../export/wavEncode.js';
 import { makeZip } from '../export/zip.js';
 import { makeMidi } from '../export/midi.js';
 import { beatsCsv } from '../export/csv.js';
-import { cleanUp, CLEANUP_MODES } from '../analysis/cleanup.js';
+import { removeHum as notchHum } from '../analysis/cleanup.js';
+import { applyEq, EQ_PRESETS } from '../process/eq.js';
+import { limit, applyGain, samplePeak, dbToGain, gainToDb } from '../process/dynamics.js';
+import { integratedLufs, truePeakDb } from '../process/loudness.js';
+import { averageSpectrum } from '../process/spectrum.js';
+import TonePanel from './TonePanel.jsx';
 import { median } from '../analysis/filters.js';
 
 function download(data, name, type) {
@@ -18,13 +23,6 @@ function download(data, name, type) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function scaled(samples, gain) {
-  if (gain === 1) return samples;
-  const out = new Float32Array(samples.length);
-  for (let i = 0; i < samples.length; i++) out[i] = samples[i] * gain;
-  return out;
 }
 
 export default function GridPanel({ analysis, fileName, onPreviewChange: reportPreview }) {
@@ -39,19 +37,26 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
   }, [analysis.bpm]);
   const [rate, setRate] = useState('44100');
   const [lengthMode, setLengthMode] = useState(wholeBars >= 4 ? 'bars' : 'all');
-  const [normalise, setNormalise] = useState(true);
-  const [cleanMode, setCleanMode] = useState('gentle');
+  const [eq, setEq] = useState(() => EQ_PRESETS.gentle.make());
+  const [removeHum, setRemoveHum] = useState(true);
+  const [view, setView] = useState('post');
+  const [level, setLevel] = useState({ autoGain: true, gainText: '0', limiterOn: true, ceilingText: '-1' });
   const [nudgeText, setNudgeText] = useState('0');
   const [clicks, setClicks] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [render, setRender] = useState(null);
-  const resampledRef = useRef({ key: '', samples: null });
+  const cacheRef = useRef({ key: '', base: null, spectrum: null });
   const nudgeMs = Math.max(-100, Math.min(100, Number(nudgeText) || 0));
 
   const bpm = Number(bpmText);
   const bpmValid = Number.isFinite(bpm) && bpm >= 30 && bpm <= 240;
   const effectiveMode = lengthMode === 'bars' && wholeBars >= 4 ? 'bars' : 'all';
   const count = effectiveMode === 'bars' ? wholeBars : usable;
+  const gainDb = Math.max(-24, Math.min(60, Number(level.gainText) || 0));
+  const ceilingDb = Math.max(-12, Math.min(0, Number.isFinite(Number(level.ceilingText)) && level.ceilingText !== '' ? Number(level.ceilingText) : -1));
+  const useHum = removeHum && analysis.hum > 0;
+  // Everything that changes the rendered audio; a render is current only if its key matches.
+  const settingsKey = JSON.stringify([bpmText, count, rate, useHum, nudgeText, eq, level.autoGain, gainDb, level.limiterOn, ceilingDb]);
   const [namePrefix, setNamePrefix] = useState(() => fileName.replace(/\.[^.]+$/, ''));
   const base = useMemo(() => namePrefix.trim().replace(/[^\w.\- ]+/g, '_') || 'heartcode', [namePrefix]);
 
@@ -63,7 +68,7 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
   // Stop any preview when this panel goes away (new file loaded).
   useEffect(() => () => { stopPreview(); reportPreview(false); }, [reportPreview]);
 
-  // Re-render the loop whenever a setting changes (debounced while typing).
+  // Re-render the loop whenever a setting changes (debounced while typing or dragging).
   useEffect(() => {
     stopPreview();
     if (!bpmValid || count < 1) return undefined;
@@ -71,45 +76,67 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
       const data = getAnalysisData();
       if (!data) return;
       const outRate = rate === 'native' ? data.sampleRate : Number(rate);
-      const cache = resampledRef.current;
-      const key = `${outRate}|${cleanMode}|${analysis.hum}`;
+      const cache = cacheRef.current;
+      const key = `${outRate}|${useHum ? analysis.hum : 0}`;
       if (cache.key !== key) {
-        const atRate = resample(data.pcm, data.sampleRate, outRate);
-        cache.samples = cleanUp(atRate, outRate, cleanMode, analysis.hum);
+        let base = resample(data.pcm, data.sampleRate, outRate);
+        if (useHum) base = Float32Array.from(notchHum(base, outRate, analysis.hum));
+        cache.base = base;
+        cache.spectrum = averageSpectrum(base, outRate);
         cache.key = key;
       }
-      const warped = gridWarp(cache.samples, outRate, analysis.beats, { bpm, count, nudge: nudgeMs / 1000 });
-      setRender(warped ? { ...warped, source: cache.samples, cleanMode } : null);
+      const opts = { bpm, count, nudge: nudgeMs / 1000 };
+      const eqd = applyEq(cache.base, outRate, eq);
+      const warped = gridWarp(eqd, outRate, analysis.beats, opts);
+      if (!warped) { setRender(null); return; }
+      const before = gridWarp(cache.base, outRate, analysis.beats, opts);
+
+      // Level: gain, then the limiter as the last stage so the file never exceeds the ceiling.
+      const peak = samplePeak(warped.samples);
+      const gain = level.autoGain ? (peak > 0 ? dbToGain(ceilingDb) / peak : 1) : dbToGain(gainDb);
+      const gained = applyGain(warped.samples, gain);
+      const limited = level.limiterOn ? limit(gained, outRate, ceilingDb) : { samples: gained, maxReductionDb: 0 };
+      setRender({
+        ...warped,
+        samples: limited.samples,
+        source: eqd,
+        gain,
+        spectrum: cache.spectrum,
+        key: settingsKey,
+        meters: {
+          gainDb: gainToDb(gain),
+          reductionDb: limited.maxReductionDb,
+          pre: { peak: truePeakDb(before.samples), lufs: integratedLufs(before.samples, outRate) },
+          post: { peak: truePeakDb(limited.samples), lufs: integratedLufs(limited.samples, outRate) },
+        },
+      });
     }, 200);
     return () => clearTimeout(id);
-  }, [analysis, bpm, bpmValid, count, rate, cleanMode, nudgeMs]);
+    // settingsKey covers every setting used above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [analysis, settingsKey]);
 
-  // Compare by value so a stale render (settings just changed) disables the buttons.
-  const fresh = Boolean(render) && bpmValid && render.bpm === bpm && render.beats === count
-    && (rate === 'native' || render.sampleRate === Number(rate))
-    && render.cleanMode === cleanMode && render.nudge === nudgeMs / 1000;
+  const fresh = Boolean(render) && bpmValid && render.key === settingsKey;
 
   function togglePreview() {
     if (previewing) { stopPreview(); return; }
-    const gain = normalise ? normaliseGain([render.samples]) : 1;
-    let s = scaled(render.samples, gain);
-    if (clicks) s = addClicks(s, render.sampleRate, render.bpm);
+    const s = clicks ? addClicks(render.samples, render.sampleRate, render.bpm) : render.samples;
     startPreview(s, render.sampleRate);
   }
 
   function exportLoop() {
-    const gain = normalise ? normaliseGain([render.samples]) : 1;
-    const wav = encodeWav(scaled(render.samples, gain), render.sampleRate, 24);
+    const wav = encodeWav(render.samples, render.sampleRate, 24);
     download(wav, `${base}_${render.bpm}bpm_${render.beats}beats.wav`, 'audio/wav');
   }
 
   function exportOneShots() {
+    // Same tone and gain as the loop; each slice is limited by itself.
     const slices = sliceBeats(render.source, render.sampleRate, analysis.beats);
-    const gain = normalise ? normaliseGain(slices) : 1; // one gain for all, so relative loudness is kept
-    const files = slices.map((s, i) => ({
-      name: `${base}_beat${String(i + 1).padStart(2, '0')}.wav`,
-      data: encodeWav(scaled(s, gain), render.sampleRate, 24),
-    }));
+    const files = slices.map((s, i) => {
+      const gained = applyGain(s, render.gain);
+      const out = level.limiterOn ? limit(gained, render.sampleRate, ceilingDb).samples : gained;
+      return { name: `${base}_beat${String(i + 1).padStart(2, '0')}.wav`, data: encodeWav(out, render.sampleRate, 24) };
+    });
     download(makeZip(files), `${base}_oneshots.zip`, 'application/zip');
   }
 
@@ -133,6 +160,21 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
   const stretch = bpmValid ? bpm / analysis.bpm : 1;
 
   return (
+    <>
+      <TonePanel
+        eq={eq}
+        onEq={setEq}
+        spectrum={render ? render.spectrum : null}
+        sampleRate={render ? render.sampleRate : 44100}
+        view={view}
+        onView={setView}
+        level={level}
+        onLevel={setLevel}
+        meters={fresh ? render.meters : null}
+        hum={analysis.hum}
+        removeHum={removeHum}
+        onRemoveHum={setRemoveHum}
+      />
     <div className="grid-panel">
       <h3 className="section-label">Grid &amp; Export</h3>
       <div className="controls">
@@ -158,14 +200,6 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
             <option value="native">Same as recording</option>
           </select>
         </label>
-        <label>
-          Clean-up
-          <select value={cleanMode} onChange={(e) => setCleanMode(e.target.value)}>
-            {Object.entries(CLEANUP_MODES).map(([id, m]) => (
-              <option key={id} value={id}>{m.label}</option>
-            ))}
-          </select>
-        </label>
         <label title="Shift every heartbeat earlier (negative) or later (positive) against the grid">
           Nudge (ms)
           <input
@@ -176,10 +210,6 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         <label>
           Export file name
           <input type="text" value={namePrefix} onChange={(e) => setNamePrefix(e.target.value)} />
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={normalise} onChange={(e) => setNormalise(e.target.checked)} />
-          Normalise to −1 dB
         </label>
         <label className="check">
           <input type="checkbox" checked={clicks} onChange={(e) => { stopPreview(); setClicks(e.target.checked); }} />
@@ -199,12 +229,6 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         <p className="note">
           This tempo is far from the recorded {analysis.bpm.toFixed(0)} BPM, so the gaps between beats are
           {stretch > 1 ? ' cut short' : ' stretched out'} noticeably.
-        </p>
-      )}
-      {fresh && analysis.hum > 0 && (
-        <p className="note">
-          {analysis.hum} Hz mains hum was found in this recording.
-          {cleanMode === 'off' ? ' Clean-up is off, so it will be in the export.' : ' Clean-up removes it from the export.'}
         </p>
       )}
       {fresh && render.irregular > 0 && (
@@ -231,5 +255,6 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         <button onClick={exportCsv}>Export beat data (.csv)</button>
       </div>
     </div>
+    </>
   );
 }
