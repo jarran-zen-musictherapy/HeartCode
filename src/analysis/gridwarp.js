@@ -35,9 +35,10 @@ export function chooseBeats(beats, count) {
  * @param {Float32Array} x samples
  * @param {number} fs sample rate of x
  * @param {Array} beats analysis.beats
- * @param {{ bpm: number, count: number }} opts
+ * @param {{ bpm: number, count: number, nudge?: number }} opts nudge: seconds to shift every
+ *   heartbeat relative to the grid (positive = later)
  */
-export function gridWarp(x, fs, beats, { bpm, count }) {
+export function gridWarp(x, fs, beats, { bpm, count, nudge = 0 }) {
   const { start, count: n } = chooseBeats(beats, count);
   if (n < 1 || !(bpm > 0)) return null;
 
@@ -47,14 +48,23 @@ export function gridWarp(x, fs, beats, { bpm, count }) {
   const total = Math.round(n * beatLen);
   const out = new Float32Array(total);
   let truncatedS2 = 0;
+  const shift = Math.round(nudge * fs);
+
+  // Beats much longer or shorter than their neighbours usually mean a missed or extra detection.
+  const lens = [];
+  for (let k = 0; k < n; k++) lens.push(beats[start + k + 1].s1Onset - beats[start + k].s1Onset);
+  const medLen = median(lens);
+  const irregular = lens.filter((v) => Math.abs(v - medLen) > 0.25 * medLen).length;
 
   for (let k = 0; k < n; k++) {
     const b = beats[start + k];
     const next = beats[start + k + 1];
-    const A = Math.max(0, Math.round(b.s1Onset * fs) - pre);
+    const onset = Math.round(b.s1Onset * fs);
+    const A = Math.max(0, onset - pre);
+    const lead = onset - A; // normally `pre`; shorter only if the file starts mid pre-roll
     const B = Math.min(x.length, Math.max(A + 1, Math.round(next.s1Onset * fs) - pre));
-    const slotStart = Math.round(k * beatLen) - pre;
-    const slotLen = Math.round((k + 1) * beatLen) - pre - slotStart;
+    const slotStart = Math.round(k * beatLen) - lead + shift;
+    const slotLen = Math.round((k + 1) * beatLen) - pre + shift - slotStart;
     const need = slotLen + xf;
     const piece = new Float32Array(need);
 
@@ -101,6 +111,8 @@ export function gridWarp(x, fs, beats, { bpm, count }) {
     bpm,
     seconds: total / fs,
     truncatedS2,
+    irregular,
+    nudge,
   };
 }
 

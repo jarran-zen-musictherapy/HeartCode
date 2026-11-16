@@ -58,7 +58,11 @@ npm run build:standalone  # one HTML file that opens by double-click
 * `src/analysis/resample.js` converts to the export rate (44.1 kHz by default)
   with a windowed-sinc filter. Upsampling a 4 kHz recording adds no detail above
   2 kHz; it only makes the file usable in a DAW.
-* `src/export/` writes 24-bit WAV files and a plain zip for the one-shots.
+* `src/analysis/cleanup.js` detects 50/60 Hz mains hum and removes it with narrow
+  notch filters (for the analysis always, for the export when Clean-up is on), and
+  provides the rumble and hiss cuts.
+* `src/export/` writes 24-bit WAV files, a plain zip for the one-shots, a MIDI file
+  (S1 on C1 on every beat, S2 on D1 at its natural offset) and a beat-by-beat CSV.
 
 ## Development phases
 
@@ -74,7 +78,5 @@ npm run build:standalone  # one HTML file that opens by double-click
   freezes the page for about 2 s while analysing; resampling a 10-minute file to a
   different rate takes about 6 s. Typical stethoscope clips (under a minute) are instant.
 * One tempo per recording: if the heart rate changes sharply mid-file, the median is reported.
-* Mains hum (50 Hz) inside the heart band can hide beats; it is flagged as low confidence
-  rather than filtered, because S1 energy lives at the same frequency.
 * Stereo files are mixed to mono as (L+R)/2; only the first two channels are read.
 * When S1 and S2 are equally spaced the tempo is ambiguous: the app flags it and offers Half/Double.

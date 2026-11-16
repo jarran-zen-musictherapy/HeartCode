@@ -4,6 +4,10 @@ import { resample } from '../analysis/resample.js';
 import { gridWarp, sliceBeats, normaliseGain, addClicks } from '../analysis/gridwarp.js';
 import { encodeWav } from '../export/wavEncode.js';
 import { makeZip } from '../export/zip.js';
+import { makeMidi } from '../export/midi.js';
+import { beatsCsv } from '../export/csv.js';
+import { cleanUp, CLEANUP_MODES } from '../analysis/cleanup.js';
+import { median } from '../analysis/filters.js';
 
 function download(data, name, type) {
   const url = URL.createObjectURL(new Blob([data], { type }));
@@ -36,10 +40,13 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
   const [rate, setRate] = useState('44100');
   const [lengthMode, setLengthMode] = useState(wholeBars >= 4 ? 'bars' : 'all');
   const [normalise, setNormalise] = useState(true);
+  const [cleanMode, setCleanMode] = useState('gentle');
+  const [nudgeText, setNudgeText] = useState('0');
   const [clicks, setClicks] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [render, setRender] = useState(null);
-  const resampledRef = useRef({ rate: 0, samples: null });
+  const resampledRef = useRef({ key: '', samples: null });
+  const nudgeMs = Math.max(-100, Math.min(100, Number(nudgeText) || 0));
 
   const bpm = Number(bpmText);
   const bpmValid = Number.isFinite(bpm) && bpm >= 30 && bpm <= 240;
@@ -65,19 +72,22 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
       if (!data) return;
       const outRate = rate === 'native' ? data.sampleRate : Number(rate);
       const cache = resampledRef.current;
-      if (cache.rate !== outRate) {
-        cache.samples = resample(data.pcm, data.sampleRate, outRate);
-        cache.rate = outRate;
+      const key = `${outRate}|${cleanMode}|${analysis.hum}`;
+      if (cache.key !== key) {
+        const atRate = resample(data.pcm, data.sampleRate, outRate);
+        cache.samples = cleanUp(atRate, outRate, cleanMode, analysis.hum);
+        cache.key = key;
       }
-      const warped = gridWarp(cache.samples, outRate, analysis.beats, { bpm, count });
-      setRender(warped ? { ...warped, source: cache.samples } : null);
+      const warped = gridWarp(cache.samples, outRate, analysis.beats, { bpm, count, nudge: nudgeMs / 1000 });
+      setRender(warped ? { ...warped, source: cache.samples, cleanMode } : null);
     }, 200);
     return () => clearTimeout(id);
-  }, [analysis, bpm, bpmValid, count, rate]);
+  }, [analysis, bpm, bpmValid, count, rate, cleanMode, nudgeMs]);
 
   // Compare by value so a stale render (settings just changed) disables the buttons.
   const fresh = Boolean(render) && bpmValid && render.bpm === bpm && render.beats === count
-    && (rate === 'native' || render.sampleRate === Number(rate));
+    && (rate === 'native' || render.sampleRate === Number(rate))
+    && render.cleanMode === cleanMode && render.nudge === nudgeMs / 1000;
 
   function togglePreview() {
     if (previewing) { stopPreview(); return; }
@@ -101,6 +111,23 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
       data: encodeWav(scaled(s, gain), render.sampleRate, 24),
     }));
     download(makeZip(files), `${base}_oneshots.zip`, 'application/zip');
+  }
+
+  function exportMidi() {
+    const used = analysis.beats.slice(render.firstBeat, render.firstBeat + render.beats);
+    const ref = median(used.map((b) => b.s1Amp)) || 1;
+    const midi = makeMidi({
+      bpm: render.bpm,
+      beats: used.map((b) => ({
+        velocity: Math.max(0, Math.min(1, (0.6 * b.s1Amp) / ref)),
+        s2Offset: b.s2Onset === null ? null : b.s2Onset - b.s1Onset,
+      })),
+    });
+    download(midi, `${base}_${render.bpm}bpm_${render.beats}beats.mid`, 'audio/midi');
+  }
+
+  function exportCsv() {
+    download(beatsCsv(analysis), `${base}_beats.csv`, 'text/csv');
   }
 
   const stretch = bpmValid ? bpm / analysis.bpm : 1;
@@ -132,6 +159,21 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
           </select>
         </label>
         <label>
+          Clean-up
+          <select value={cleanMode} onChange={(e) => setCleanMode(e.target.value)}>
+            {Object.entries(CLEANUP_MODES).map(([id, m]) => (
+              <option key={id} value={id}>{m.label}</option>
+            ))}
+          </select>
+        </label>
+        <label title="Shift every heartbeat earlier (negative) or later (positive) against the grid">
+          Nudge (ms)
+          <input
+            type="number" min="-100" max="100" step="1" value={nudgeText}
+            onChange={(e) => setNudgeText(e.target.value)}
+          />
+        </label>
+        <label>
           Export file name
           <input type="text" value={namePrefix} onChange={(e) => setNamePrefix(e.target.value)} />
         </label>
@@ -159,6 +201,19 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
           {stretch > 1 ? ' cut short' : ' stretched out'} noticeably.
         </p>
       )}
+      {fresh && analysis.hum > 0 && (
+        <p className="note">
+          {analysis.hum} Hz mains hum was found in this recording.
+          {cleanMode === 'off' ? ' Clean-up is off, so it will be in the export.' : ' Clean-up removes it from the export.'}
+        </p>
+      )}
+      {fresh && render.irregular > 0 && (
+        <p className="error-text">
+          {render.irregular} of the {render.beats} beats in this loop are much longer or shorter than the rest in
+          the recording, which usually means a missed or extra marker. Check the waveform, or try the shorter
+          loop length.
+        </p>
+      )}
       {fresh && render.truncatedS2 > 0 && (
         <p className="error-text">
           At this tempo {render.truncatedS2} of {render.beats} beats lose part of their second sound (S2).
@@ -172,6 +227,8 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         </button>
         <button onClick={exportLoop} disabled={!fresh}>Export loop (.wav)</button>
         <button onClick={exportOneShots} disabled={!fresh}>Export one-shots (.zip)</button>
+        <button onClick={exportMidi} disabled={!fresh}>Export MIDI (.mid)</button>
+        <button onClick={exportCsv}>Export beat data (.csv)</button>
       </div>
     </div>
   );

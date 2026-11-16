@@ -11,6 +11,8 @@ export function biquad(type, fs, f0, Q = Math.SQRT1_2) {
     b1 = 1 - cos; b0 = b1 / 2; b2 = b0;
   } else if (type === 'highpass') {
     b1 = -(1 + cos); b0 = (1 + cos) / 2; b2 = b0;
+  } else if (type === 'notch') {
+    b0 = 1; b1 = -2 * cos; b2 = 1;
   } else {
     throw new Error(`Unsupported biquad type: ${type}`);
   }

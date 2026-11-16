@@ -36,7 +36,7 @@ export default function AnalysisPanel({ analysis, swapAnchor, onSwapAnchor, temp
   }
 
   const {
-    bpm, beats, hrv, anchorMethod, s2Found, regularity, coverage, shortRecording, tempoAmbiguous,
+    bpm, beats, hrv, anchorMethod, s2Found, regularity, coverage, shortRecording, tempoAmbiguous, hum,
   } = analysis;
   const lowConfidence = regularity < 0.4 || coverage < 0.8;
 
@@ -52,6 +52,9 @@ export default function AnalysisPanel({ analysis, swapAnchor, onSwapAnchor, temp
         <Stat label="Regularity" value={(regularity * 100).toFixed(0)} unit="%" />
       </div>
       <p className="note">{METHOD_TEXT[anchorMethod]}</p>
+      {hum > 0 && (
+        <p className="note">{hum} Hz mains hum detected and filtered out before analysis.</p>
+      )}
       {shortRecording && hrv && (
         <p className="note">
           Recording is under 30 seconds, so SDNN and RMSSD are indicative only.

@@ -2,6 +2,7 @@
 // Works on raw mono samples at the file's native sample rate.
 
 import { biquad, filtfilt, decimate, movingAverage, median } from './filters.js';
+import { detectHum, removeHum } from './cleanup.js';
 
 const BAND_LOW_HZ = 25;
 const BAND_HIGH_HZ = 150;
@@ -27,6 +28,9 @@ export function heartEnvelope(pcm, sampleRate) {
   const factor = Math.max(1, Math.floor(sampleRate / WORK_RATE_HZ));
   const fs = sampleRate / factor;
   let x = decimate(pcm, factor);
+  // Mains hum sits inside the heart band and would bury the quieter sounds.
+  const hum = detectHum(x, fs);
+  if (hum) x = removeHum(x, fs, hum);
   x = filtfilt(x, biquad('highpass', fs, BAND_LOW_HZ));
   x = filtfilt(x, biquad('lowpass', fs, Math.min(BAND_HIGH_HZ, 0.45 * fs)));
   const low = filtfilt(x, biquad('lowpass', fs, SPLIT_HZ));
@@ -35,6 +39,7 @@ export function heartEnvelope(pcm, sampleRate) {
   return {
     env: smoothEnvelope(x, fs),
     fs,
+    hum,
     bands: [smoothEnvelope(low, fs), smoothEnvelope(high, fs)],
   };
 }
@@ -263,7 +268,7 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
   });
   if (duration < 2) return empty('Recording is too short to analyse (need at least 2 seconds).');
 
-  const { env, fs, bands } = heartEnvelope(pcm, sampleRate);
+  const { env, fs, bands, hum } = heartEnvelope(pcm, sampleRate);
   const tempo = estimatePeriod(env, fs, bands);
   if (!tempo || tempo.strength < 0.1) return empty('No regular heartbeat found in this recording.');
   if (opts.tempoFactor === 2 || opts.tempoFactor === 0.5) tempo.period /= opts.tempoFactor;
@@ -367,6 +372,7 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
     regularity: tempo.strength, // 0..1 autocorrelation strength
     tempoAmbiguous: tempo.ambiguous, // true: offer the x2 / half override
     coverage: Math.min(1, beats.length / expected), // share of expected beats found
+    hum, // 0, 50 or 60: mains hum found (and filtered out for the analysis)
     shortRecording: duration < 30, // HRV from under 30 s is indicative only
   };
 }
