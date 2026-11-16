@@ -16,8 +16,10 @@ diagnosis or clinical decisions.
 
 ## How to use
 
-1. Export a recording from your digital stethoscope as a `.wav` (Littmann CORE via the
-   Eko app exports 4000 Hz mono). About 30 seconds of a still, quiet recording works best.
+1. Get the recording off your stethoscope app. A direct `.wav` export is ideal (Littmann
+   CORE via the Eko app exports 4000 Hz mono). A screen recording of the app playing the
+   heartbeat also works: HeartCode reads the audio from `.mp4`, `.mov` and `.m4a` files.
+   About 30 seconds of a still, quiet recording works best.
 2. Load it. Check that the green S1 markers sit on each heartbeat; use *Swap S1 and S2*
    or *Half / Double* if they do not.
 3. Set the tempo and loop length, preview with the metronome, then export the loop or

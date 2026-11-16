@@ -17,7 +17,7 @@ export default function FileLoader({ onFileLoaded }) {
       onFileLoaded({ name: file.name, ...meta });
     } catch (err) {
       console.error('Failed to decode audio file:', err);
-      setError('Could not decode this file. Please use a valid .wav or .mp3.');
+      setError('Could not read audio from this file. Try a .wav, .m4a or .mp3, or a screen recording saved as .mp4.');
       onFileLoaded(null);
     } finally {
       setLoading(false);
@@ -27,11 +27,11 @@ export default function FileLoader({ onFileLoaded }) {
 
   return (
     <div className="file-loader">
-      <label htmlFor="audio-file">Load audio file:</label>
+      <label htmlFor="audio-file">Load a recording (audio file or screen recording):</label>
       <input
         id="audio-file"
         type="file"
-        accept=".wav,.mp3,audio/wav,audio/mpeg"
+        accept=".wav,.mp3,.m4a,.aac,.mp4,.mov,.aif,.aiff,.flac,.ogg,audio/*,video/mp4,video/quicktime"
         onChange={handleChange}
         disabled={loading}
       />

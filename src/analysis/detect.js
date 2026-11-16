@@ -370,7 +370,9 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
     anchorMethod, // 'timing' | 'loudness' | 'single'
     s2Found: paired,
     regularity: tempo.strength, // 0..1 autocorrelation strength
-    tempoAmbiguous: tempo.ambiguous, // true: offer the x2 / half override
+    // Evenly spaced sounds (S1 picked by loudness) are exactly the case where a
+    // heartbeat and half a heartbeat look alike, so flag that too.
+    tempoAmbiguous: tempo.ambiguous || anchorMethod === 'loudness',
     coverage: Math.min(1, beats.length / expected), // share of expected beats found
     hum, // 0, 50 or 60: mains hum found (and filtered out for the analysis)
     shortRecording: duration < 30, // HRV from under 30 s is indicative only
