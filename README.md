@@ -5,13 +5,32 @@ recordings and turns them into analysed, processed, and rhythmically quantised
 audio for clinical music creation. Everything runs in the browser: no recording
 is uploaded or stored.
 
+**Use it:** https://jarran-zen-musictherapy.github.io/HeartCode/
+
+**Private by design.** Recordings are processed entirely in your browser. Nothing is
+uploaded, stored or sent anywhere.
+
+**Not a medical device.** HeartCode is a tool for making music from heart sounds. Its
+heart-rate and variability figures are for musical use only and must not be used for
+diagnosis or clinical decisions.
+
+## How to use
+
+1. Export a recording from your digital stethoscope as a `.wav` (Littmann CORE via the
+   Eko app exports 4000 Hz mono). About 30 seconds of a still, quiet recording works best.
+2. Load it. Check that the green S1 markers sit on each heartbeat; use *Swap S1 and S2*
+   or *Half / Double* if they do not.
+3. Set the tempo and loop length, preview with the metronome, then export the loop or
+   the individual beats.
+
 ## Run it
 
 ```
 npm install
 npm run dev      # local development
 npm test         # analysis tests (Node, no browser needed)
-npm run build    # static site in dist/, ready for GitHub Pages
+npm run build    # static site in dist/ (published by .github/workflows/deploy.yml)
+npm run build:standalone  # one HTML file that opens by double-click
 ```
 
 ## Tech stack
