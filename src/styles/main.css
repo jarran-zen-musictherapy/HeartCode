@@ -255,3 +255,18 @@ button.secondary {
 .controls input[type='text'] {
   width: 15rem;
 }
+
+.footer {
+  margin-top: 2rem;
+  padding-top: 1rem;
+  border-top: 1px solid #2a2a4e;
+  font-size: 0.8rem;
+  color: #888;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.footer .version {
+  color: #555;
+}

@@ -86,6 +86,18 @@ function App() {
           <SpectrumAnalyser isPlaying={isPlaying || isPreviewing} />
         </>
       )}
+
+      <footer className="footer">
+        <p>
+          <strong>Private by design:</strong> recordings are processed entirely in your browser and are
+          never uploaded or stored.
+        </p>
+        <p>
+          HeartCode is a music-creation tool. It is not a medical device and must not be used for
+          diagnosis or clinical decisions.
+        </p>
+        <p className="version">HeartCode v{__APP_VERSION__}</p>
+      </footer>
     </div>
   );
 }
