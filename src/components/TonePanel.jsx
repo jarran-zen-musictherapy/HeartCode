@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { EQ_LIMITS, EQ_PRESETS, eqResponseDb } from '../process/eq.js';
 import { NOISE_LEVELS } from '../process/noise.js';
+import { DENOISE_LEVELS } from '../process/denoise.js';
 import { fitCanvas } from '../utils/canvas.js';
 
 const HEIGHT = 240;
@@ -31,7 +32,7 @@ function Meter({ label, peak, lufs }) {
 }
 
 export default function TonePanel({
-  eq, onEq, spectrum, sampleRate, view, onView, level, onLevel, meters, hum, removeHum, onRemoveHum, noise, onNoise,
+  eq, onEq, spectrum, sampleRate, view, onView, level, onLevel, meters, hum, removeHum, onRemoveHum, noise, onNoise, denoise, onDenoise,
 }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -239,8 +240,14 @@ export default function TonePanel({
             {Object.entries(EQ_PRESETS).map(([id, p]) => <option key={id} value={id}>{p.label}</option>)}
           </select>
         </label>
+        <label title="Learns the background noise from the gaps between heartbeats, then removes it everywhere, including underneath the heart sounds">
+          Noise removal
+          <select value={denoise} onChange={(e) => onDenoise(e.target.value)}>
+            {Object.entries(DENOISE_LEVELS).map(([id, n]) => <option key={id} value={id}>{n.label}</option>)}
+          </select>
+        </label>
         <label title="Turns down the gaps between heart sounds, where hiss and room noise sit">
-          Noise reduction
+          Quieten the gaps
           <select value={noise} onChange={(e) => onNoise(e.target.value)}>
             {Object.entries(NOISE_LEVELS).map(([id, n]) => <option key={id} value={id}>{n.label}</option>)}
           </select>

@@ -230,3 +230,118 @@ test('MP3 export: valid frames, size close to the estimate', () => {
   assert.throws(() => encodeMp3(x, 4000, 128));
   assert.equal(estimateSize('wav', 2, { sampleRate: 44100, bitDepth: 24 }), 44 + 88200 * 3);
 });
+
+// --- noise removal, beat averaging, and the full render chain ---
+import { denoise } from '../src/process/denoise.js';
+import { averageBeat, repeatBeat } from '../src/process/average.js';
+import { createRenderer } from '../src/process/render.js';
+import { createHandler } from '../src/worker/handler.js';
+import { flatEq as flat } from '../src/process/eq.js';
+
+const snrDb = (y, clean) => {
+  let s = 0; let n = 0;
+  for (let i = 0; i < y.length; i++) { s += clean[i] ** 2; n += (y[i] - clean[i]) ** 2; }
+  return 10 * Math.log10(s / n);
+};
+
+test('noise removal: off returns the audio untouched; on improves the signal-to-noise ratio a lot', () => {
+  const o = { sampleRate: 4000, seed: 3, seconds: 20 };
+  const clean = synthHeart({ ...o, noise: 0 }).pcm;
+  const noisy = synthHeart({ ...o, noise: 0.08 }).pcm;
+  const beats = analyseHeartbeat(noisy, 4000).beats;
+  assert.equal(denoise(noisy, 4000, 'off', beats), noisy);
+  const before = snrDb(noisy, clean);
+  for (const [lvl, gain] of [['light', 5], ['medium', 9], ['strong', 12]]) {
+    assert.ok(snrDb(denoise(noisy, 4000, lvl, beats), clean) > before + gain, lvl);
+    assert.ok(snrDb(denoise(noisy, 4000, lvl), clean) > before + gain, `${lvl} without beats`);
+  }
+});
+
+test('noise removal: a clean recording passes through nearly unchanged', () => {
+  const noisy = synthHeart({ sampleRate: 4000, seed: 4, seconds: 12, noise: 0.002 }).pcm;
+  const out = denoise(noisy, 4000, 'medium', analyseHeartbeat(noisy, 4000).beats);
+  assert.equal(out.length, noisy.length);
+  assert.ok(snrDb(out, noisy) > 25);
+});
+
+test('beat averaging: keeps the heart sound, cuts noise by the square root of the beat count, and loops', () => {
+  for (const sampleRate of [4000, 44100]) {
+    const noisy = synthHeart({ sampleRate, seed: 5, seconds: 30, jitter: 0.03, noise: 0.1 });
+    const a = analyseHeartbeat(noisy.pcm, sampleRate);
+    const avg = averageBeat(noisy.pcm, sampleRate, a.beats);
+    const C = avg.cycle.length;
+    assert.ok(avg.used >= 0.8 * avg.total && avg.hasS2);
+    assert.ok(Math.abs(avg.period - 60 / 72) < 0.02);
+    let s1 = 0; let s2 = 0;
+    const split = Math.round(avg.beat.s2Onset * sampleRate) - Math.round(0.01 * sampleRate);
+    for (let i = 0; i < split; i++) s1 = Math.max(s1, Math.abs(avg.cycle[i]));
+    for (let i = split; i < C; i++) s2 = Math.max(s2, Math.abs(avg.cycle[i]));
+    assert.ok(s1 > 0.85 && s1 < 1.15, `S1 level ${s1}`);
+    assert.ok(s2 > 0.48 && s2 < 0.72, `S2 level ${s2}`); // not blurred by beat-to-beat timing changes
+    let q = 0;
+    const q0 = Math.round(0.75 * C); const q1 = Math.round(0.95 * C);
+    for (let i = q0; i < q1; i++) q += avg.cycle[i] ** 2;
+    q = Math.sqrt(q / (q1 - q0));
+    assert.ok(q < 1.3 * (0.1 / Math.sqrt(avg.used)), `gap noise ${q}`);
+    // The beat joins on to itself without a step.
+    assert.ok(Math.abs(avg.cycle[0] - avg.cycle[C - 1]) < 0.05);
+    const rep = repeatBeat(avg, 4);
+    assert.equal(rep.pcm.length, 6 * C);
+    assert.equal(rep.beats.length, 6);
+  }
+});
+
+test('beat averaging: an odd beat (a bump) is left out', () => {
+  const h = synthHeart({ sampleRate: 4000, seed: 6, seconds: 25, noise: 0.01, jitter: 0.01 });
+  const a = analyseHeartbeat(h.pcm, 4000);
+  const k = 7;
+  const at = Math.round((a.beats[k].s1Onset - 0.02) * 4000);
+  for (let i = 0; i < 600; i++) h.pcm[at + i] = 0.9 * Math.sin(i * 0.9) * (i % 7 ? 1 : -1);
+  const avg = averageBeat(h.pcm, 4000, a.beats);
+  assert.ok(avg.used < avg.total);
+  assert.equal(averageBeat(h.pcm, 4000, a.beats.slice(0, 2)), null);
+});
+
+const SETTINGS = {
+  outRate: 44100, humHz: 0, denoise: 'off', noise: 'off', average: false, eq: flat(), bpm: 72, count: 4,
+  nudge: 0, selection: null, autoGain: true, gainDb: 0, limiterOn: true, ceilingDb: -1,
+};
+
+test('render chain: grid loop, averaged loop and hand-picked loop all come out exact and within the ceiling', () => {
+  const h = synthHeart({ sampleRate: 4000, seed: 7, seconds: 20, noise: 0.03 });
+  const data = { pcm: h.pcm, sampleRate: 4000 };
+  const analysis = analyseHeartbeat(h.pcm, 4000);
+  const r = createRenderer();
+  const plain = r.render(data, analysis, SETTINGS);
+  assert.equal(plain.samples.length, Math.round((4 * 60 / 72) * 44100));
+  assert.equal(plain.usedBeats.length, 4);
+  assert.ok(plain.meters.post.peak <= -0.9);
+  const avg = r.render(data, analysis, { ...SETTINGS, average: true, denoise: 'medium', noise: 'medium' });
+  assert.equal(avg.samples.length, plain.samples.length);
+  assert.ok(avg.averaged.used >= 10);
+  assert.equal(avg.usedBeats.length, 4);
+  // All four beats of the averaged loop are the same beat.
+  const L = avg.samples.length / 4;
+  let diff = 0;
+  for (let i = 0; i < L; i++) diff = Math.max(diff, Math.abs(avg.samples[i] - avg.samples[i + 2 * L]));
+  assert.ok(diff < 0.02, `beats differ by ${diff}`);
+  const man = r.render(data, analysis, { ...SETTINGS, selection: { start: 2, end: 5 } });
+  assert.ok(man.manual && Math.abs(man.seconds - 3) < 0.001);
+  assert.equal(r.render(data, analysis, { ...SETTINGS, count: 0 }), null);
+  const shots = r.oneShots(data, analysis, SETTINGS, plain.gain);
+  assert.equal(shots.length, analysis.beats.length - 1);
+});
+
+test('worker jobs: audio, analyse, render in order; stale renders are refused', () => {
+  const h = synthHeart({ sampleRate: 4000, seed: 8, seconds: 15 });
+  const handle = createHandler();
+  assert.equal(handle({ type: 'analyse', opts: {} }), null);
+  handle({ type: 'audio', pcm: h.pcm, sampleRate: 4000 });
+  const a1 = handle({ type: 'analyse', opts: {} });
+  assert.ok(a1.ok && a1.id === 1);
+  assert.ok(handle({ type: 'render', analysisId: a1.id, settings: SETTINGS }).loop.samples.length > 0);
+  const a2 = handle({ type: 'analyse', opts: {}, range: { start: 2, end: 12 } });
+  assert.ok(a2.range && a2.id === 2);
+  assert.deepEqual(handle({ type: 'render', analysisId: a1.id, settings: SETTINGS }), { stale: true });
+  assert.throws(() => handle({ type: 'nope' }));
+});

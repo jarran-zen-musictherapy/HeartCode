@@ -74,6 +74,14 @@ npm run build:standalone  # one HTML file that opens by double-click
 * `src/process/noise.js` is the noise reduction (a smooth gate that turns down the gaps
   between heart sounds, set from each recording's own levels) and the per-beat
   cleanliness score used by the "cleanest beats" loop options.
+* `src/process/denoise.js` is the spectral noise removal: it learns the background noise
+  from the gaps between heartbeats and removes it everywhere, under the heart sounds too.
+* `src/process/average.js` is beat averaging: all beats are lined up (S1 and S2
+  separately) and averaged into one clean beat, cutting random noise by about 3 dB per
+  doubling of the beat count. The loop is then built from that one beat.
+* `src/process/render.js` is the whole loop-building chain in one function, and
+  `src/worker/` runs it and the analysis in a background worker so the page never
+  freezes (with an automatic fallback to the page itself if workers are unavailable).
 * `src/export/` writes 24-bit WAV files, a plain zip for the one-shots, MP3 (via lamejs, LGPL-3.0), a MIDI file
   (S1 on C1 on every beat, S2 on D1 at its natural offset) and a beat-by-beat CSV.
 
@@ -88,9 +96,11 @@ npm run build:standalone  # one HTML file that opens by double-click
 
 ## Known limitations
 
-* Analysis and resampling run on the main thread. A 10-minute 44.1 kHz recording
-  freezes the page for about 2 s while analysing; resampling a 10-minute file to a
-  different rate takes about 6 s. Typical stethoscope clips (under a minute) are instant.
+* Long recordings take a few seconds to analyse or re-render (noise removal on a
+  5-minute 44.1 kHz file takes about 3 s). The page stays usable and shows "Working…".
+* Beat averaging and noise removal are verified by measurement on synthetic recordings,
+  not by clinical listening tests. Averaging makes every beat identical, so it removes
+  beat-to-beat variation; it suits steady rhythms, not irregular ones.
 * One tempo per recording: if the heart rate changes sharply mid-file, the median is reported.
 * Stereo files are mixed to mono as (L+R)/2; only the first two channels are read.
 * When S1 and S2 are equally spaced the tempo is ambiguous: the app flags it and offers Half/Double.

@@ -1,6 +1,6 @@
 // Averaged magnitude spectrum (Welch method) for the EQ display.
 
-function fft(re, im) {
+export function fft(re, im) {
   const n = re.length;
   for (let i = 1, j = 0; i < n; i++) {
     let bit = n >> 1;

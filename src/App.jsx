@@ -6,7 +6,7 @@ import SpectrumAnalyser from './components/SpectrumAnalyser.jsx';
 import AnalysisPanel from './components/AnalysisPanel.jsx';
 import GridPanel from './components/GridPanel.jsx';
 import { getAnalysisData, onEnded, setLoopRegion } from './audio/engine.js';
-import { analyseHeartbeat, analyseHeartbeatRange } from './analysis/detect.js';
+import { setAudio, analyse } from './worker/client.js';
 import { encodeWav } from './export/wavEncode.js';
 
 function App() {
@@ -23,19 +23,21 @@ function App() {
   // Keep the buttons honest when playback reaches the end by itself.
   useEffect(() => onEnded(() => setIsPlaying(false)), []);
 
+  // Hand each newly loaded recording to the background worker.
+  useEffect(() => {
+    const data = getAnalysisData();
+    if (fileMeta && data) setAudio(data.pcm, data.sampleRate);
+  }, [fileMeta, fileVersion]);
+
   // Analyse whenever a file loads or the S1/S2 choice is flipped.
   useEffect(() => {
-    if (!fileMeta) return undefined;
-    const data = getAnalysisData();
-    if (!data) return undefined;
-    // Defer one tick so the waveform paints before the number crunching.
-    const id = setTimeout(() => {
-      const opts = { swapAnchor, tempoFactor };
-      setAnalysis(analysisRange
-        ? analyseHeartbeatRange(data.pcm, data.sampleRate, analysisRange.start, analysisRange.end, opts)
-        : analyseHeartbeat(data.pcm, data.sampleRate, opts));
-    }, 0);
-    return () => clearTimeout(id);
+    if (!fileMeta || !getAnalysisData()) return undefined;
+    let cancelled = false;
+    analyse({ swapAnchor, tempoFactor }, analysisRange).then(
+      (result) => { if (!cancelled && result) setAnalysis(result); },
+      (err) => { console.error('Analysis failed:', err); },
+    );
+    return () => { cancelled = true; };
   }, [fileMeta, fileVersion, swapAnchor, tempoFactor, analysisRange]);
 
   // While a loop is selected, Play loops just that part.
