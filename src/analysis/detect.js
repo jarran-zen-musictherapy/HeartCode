@@ -235,6 +235,33 @@ function bestChain(cands, period) {
   return best;
 }
 
+/**
+ * Track beats across the whole recording, including separate stretches of
+ * heartbeat with silence or handling noise between them (the tracker gives up
+ * after a few missed beats, so each stretch is found by itself).
+ * `allowed` optionally restricts tracking to a subset of candidate indices.
+ * Returns candidate indices in time order.
+ */
+function trackAll(cands, period, allowed = null) {
+  const idx = allowed ? allowed.slice().sort((a, b) => a - b) : cands.map((c, j) => j);
+  const pool = idx.map((j) => cands[j]);
+  const found = [];
+  let mainLevel = 0;
+  const run = (lo, hi) => { // inclusive positions in `pool`
+    if (hi - lo + 1 < 3) return;
+    const chain = bestChain(pool.slice(lo, hi + 1), period).map((k) => k + lo);
+    const level = median(chain.map((k) => pool[k].amp));
+    if (!found.length) mainLevel = level;
+    // A further stretch must be a real run of beats, not a couple of stray noises.
+    else if (chain.length < 4 || level < 0.25 * mainLevel) return;
+    found.push(...chain);
+    run(lo, chain[0] - 1);
+    run(chain[chain.length - 1] + 1, hi);
+  };
+  run(0, pool.length - 1);
+  return found.sort((a, b) => a - b).map((k) => idx[k]);
+}
+
 /** For each chain sound, the strongest other sound before the next chain sound. */
 function findPartners(cands, chain, period, lo, hi) {
   const inChain = new Set(chain);
@@ -292,36 +319,56 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
   const cands = findCandidates(env, fs, tempo.period);
   if (cands.length < 3) return empty('Too few heart sounds detected.');
 
-  let chain = bestChain(cands, tempo.period);
-  let partners = findPartners(cands, chain, tempo.period, 0.15, 0.85);
-  const found = partners.filter(Boolean);
-  const paired = found.length >= 0.5 * chain.length;
+  // Track every stretch of heartbeat, then decide S1 vs S2 separately for each
+  // stretch: the tracker follows whichever sound is strongest, and that can be
+  // S1 in one stretch and S2 in the next.
+  const tracked = trackAll(cands, tempo.period);
+  const stretches = [];
+  for (const j of tracked) {
+    const cur = stretches[stretches.length - 1];
+    if (cur && cands[j].t - cands[cur[cur.length - 1]].t < 2.5 * tempo.period) cur.push(j);
+    else stretches.push([j]);
+  }
 
   // Which sound is S1? Systole (S1->S2) is shorter than diastole (S2->S1),
   // so S1 is the sound followed by the SHORT gap. If the gaps are too even to
   // tell, fall back to "S1 is the louder sound".
-  let anchorMethod = 'single';
-  let chainIsS1 = true;
-  if (paired) {
+  const orient = (seg) => {
+    const found = findPartners(cands, seg, tempo.period, 0.15, 0.85).filter(Boolean);
+    if (found.length < 0.5 * seg.length) return { paired: false, method: 'single', isS1: true };
     const frac = median(found.map((p) => p.frac));
-    if (Math.abs(frac - 0.5) >= 0.05) {
-      anchorMethod = 'timing';
-      chainIsS1 = frac < 0.5;
-    } else {
-      anchorMethod = 'loudness';
-      const chainAmp = median(chain.map((j) => cands[j].amp));
-      const partnerAmp = median(found.map((p) => cands[p.j].amp));
-      chainIsS1 = chainAmp >= partnerAmp;
-    }
-  }
-  if (opts.swapAnchor && paired) chainIsS1 = !chainIsS1;
+    if (Math.abs(frac - 0.5) >= 0.05) return { paired: true, method: 'timing', isS1: frac < 0.5 };
+    const segAmp = median(seg.map((j) => cands[j].amp));
+    const partnerAmp = median(found.map((p) => cands[p.j].amp));
+    return { paired: true, method: 'loudness', isS1: segAmp >= partnerAmp };
+  };
 
-  if (!chainIsS1) {
-    // Re-track on the partner sounds so the chain itself is S1.
-    const seed = found.reduce((a, b) => (cands[b.j].amp > cands[a.j].amp ? b : a)).j;
-    chain = trackChain(cands, seed, tempo.period);
+  let chain = [];
+  let anchorMethod = 'single';
+  let paired = false;
+  let longest = 0;
+  for (const seg of stretches) {
+    const o = orient(seg);
+    if (seg.length > longest) { longest = seg.length; anchorMethod = o.method; paired = o.paired; }
+    let isS1 = o.isS1;
+    if (opts.swapAnchor && o.paired) isS1 = !isS1;
+    let use = seg;
+    if (!isS1) {
+      // Re-track this stretch on its other sounds so the chain itself is S1.
+      const inSeg = new Set(seg);
+      const others = [];
+      for (let j = Math.max(0, seg[0] - 1); j <= Math.min(cands.length - 1, seg[seg.length - 1] + 1); j++) {
+        if (!inSeg.has(j)) others.push(j);
+      }
+      if (others.length >= 3) {
+        const alt = trackAll(cands, tempo.period, others);
+        if (alt.length >= 2) use = alt;
+      }
+    }
+    chain.push(...use);
   }
-  if (paired) partners = findPartners(cands, chain, tempo.period, 0.15, 0.7);
+  chain = [...new Set(chain)].sort((x, y) => x - y);
+  const partners = paired ? findPartners(cands, chain, tempo.period, 0.15, 0.7) : [];
 
   // A sound clipped by the start or end of the file is not a usable beat.
   const edge = 0.06;
@@ -375,7 +422,11 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
     hrv = { meanRR: mean, sdnn, rmssd: nd ? Math.sqrt(sq / nd) : null };
   }
 
-  const expected = Math.max(1, Math.round((beats[beats.length - 1].s1 - beats[0].s1) / (60 / bpm)) + 1);
+  // Beats we would expect between the first and last marker. A long silence between
+  // two stretches of heartbeat is a pause in the recording, not missed beats.
+  const beatLen = 60 / bpm;
+  let expected = 1;
+  for (const v of allRR) expected += v > 4 * beatLen ? 1 : Math.max(1, Math.round(v / beatLen));
   return {
     ok: true,
     duration,

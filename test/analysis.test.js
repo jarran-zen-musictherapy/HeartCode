@@ -122,3 +122,31 @@ test('a genuinely slow heart (45 BPM) is still read as slow', () => {
   const r2 = analyseHeartbeat(slow.pcm, 4000);
   assert.ok(Math.abs(r2.bpm - 36) < 2, `36 BPM read as ${r2.bpm.toFixed(1)}`);
 });
+
+test('two stretches of heartbeat separated by silence are both tracked', () => {
+  const a = synthHeart({ seconds: 14, bpm: 74, noise: 0.02, seed: 4 });
+  const b = synthHeart({ seconds: 14, bpm: 74, noise: 0.02, seed: 5 });
+  const gap = 4000 * 5;
+  const x = new Float32Array(a.pcm.length + gap + b.pcm.length);
+  x.set(a.pcm, 0);
+  for (let i = 0; i < gap; i++) x[a.pcm.length + i] = 0.002 * Math.sin(i); // near-silence
+  x.set(b.pcm, a.pcm.length + gap);
+  const r = analyseHeartbeat(x, 4000);
+  assert.ok(r.ok, r.reason);
+  const total = a.s1.length + b.s1.length;
+  assert.ok(r.beats.length >= total - 2 && r.beats.length <= total + 1, `beats ${r.beats.length} of ${total}`);
+  const inSecond = r.beats.filter((bt) => bt.s1 > 19).length;
+  assert.ok(inSecond >= b.s1.length - 1, `second stretch has ${inSecond} beats`);
+  assert.ok(Math.abs(r.bpm - 74) < 2);
+  assert.ok(r.coverage > 0.9, `coverage ${r.coverage}`);
+  assert.equal(r.anchorMethod, 'timing');
+});
+
+test('stray noises away from the heartbeat do not become beats', () => {
+  const s = synthHeart({ seconds: 12, bpm: 72, noise: 0.01 });
+  const x = new Float32Array(4000 * 22);
+  x.set(s.pcm, 0);
+  for (const t of [15.0, 17.3]) for (let i = 0; i < 300; i++) x[Math.round(t * 4000) + i] += 0.8 * Math.sin(i / 5) * Math.exp(-i / 80);
+  const r = analyseHeartbeat(x, 4000);
+  assert.equal(r.beats.filter((b) => b.s1 > 13).length, 0);
+});
