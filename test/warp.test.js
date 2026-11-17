@@ -5,7 +5,7 @@ import { gridWarp, sliceBeats, chooseBeats, normaliseGain } from '../src/analysi
 import { analyseHeartbeat } from '../src/analysis/detect.js';
 import { median } from '../src/analysis/filters.js';
 import { encodeWav } from '../src/export/wavEncode.js';
-import { parseWav } from '../src/audio/wav.js';
+import { parseWav, wavLayout } from '../src/audio/wav.js';
 import { crc32, makeZip } from '../src/export/zip.js';
 import { synthHeart } from './synth.js';
 import { makeMidi } from '../src/export/midi.js';
@@ -229,4 +229,16 @@ test('CSV export: header plus one row per beat', () => {
   assert.equal(lines.length, a.beats.length + 1);
   assert.equal(lines[0].split(',').length, 6);
   assert.ok(lines[1].startsWith('1,'));
+});
+
+test('wavLayout: finds the audio from the header alone, and a cut-short file still parses', () => {
+  const x = new Float32Array(8000);
+  for (let i = 0; i < x.length; i++) x[i] = Math.sin(i / 9);
+  const full = encodeWav(x, 4000, 16);
+  const lay = wavLayout(full.slice(0, 200));
+  assert.deepEqual(lay, { dataOffset: 44, dataBytes: 16000, sampleRate: 4000, blockAlign: 2 });
+  const part = parseWav(full.slice(0, 44 + 4000 * 2)); // first second only
+  assert.equal(part.frames, 4000);
+  assert.ok(Math.abs(part.mono[100] - x[100]) < 1e-3);
+  assert.equal(wavLayout(new ArrayBuffer(100)), null);
 });

@@ -1,4 +1,4 @@
-import { parseWav } from './wav.js';
+import { parseWav, wavLayout } from './wav.js';
 import { resample } from '../analysis/resample.js';
 
 let audioContext = null;
@@ -16,6 +16,10 @@ let analysisPCM = null;
 let analysisRate = 0;
 
 const endedListeners = new Set();
+
+// Heartbeat work needs seconds, not hours. Longer files are loaded in part so the
+// browser does not run out of memory.
+export const MAX_SECONDS = 300;
 
 // Separate looping source for auditioning the grid-warped result.
 let previewNode = null;
@@ -51,7 +55,19 @@ export async function decodeFile(file) {
   audioBuffer = null;
   analysisPCM = null;
 
-  const arrayBuffer = await file.arrayBuffer();
+  // For a long WAV, read only the first MAX_SECONDS from disk.
+  let arrayBuffer = null;
+  let fullDuration = null;
+  const layout = wavLayout(await file.slice(0, 65536).arrayBuffer());
+  if (layout) {
+    const bytesPerSecond = layout.sampleRate * layout.blockAlign;
+    const total = Math.min(layout.dataBytes, file.size - layout.dataOffset) / bytesPerSecond;
+    if (total > MAX_SECONDS) {
+      fullDuration = total;
+      arrayBuffer = await file.slice(0, layout.dataOffset + MAX_SECONDS * bytesPerSecond).arrayBuffer();
+    }
+  }
+  if (!arrayBuffer) arrayBuffer = await file.arrayBuffer();
   const wav = parseWav(arrayBuffer);
 
   let buffer = null;
@@ -64,7 +80,17 @@ export async function decodeFile(file) {
       buffer = null;
     }
   }
-  if (!buffer) buffer = await ctx.decodeAudioData(arrayBuffer);
+  if (!buffer) {
+    buffer = await ctx.decodeAudioData(arrayBuffer);
+    if (!wav && buffer.duration > MAX_SECONDS) {
+      // Compressed formats have to be decoded whole; keep only the first part.
+      fullDuration = buffer.duration;
+      const keep = Math.round(MAX_SECONDS * buffer.sampleRate);
+      const short = ctx.createBuffer(buffer.numberOfChannels, keep, buffer.sampleRate);
+      for (let c = 0; c < buffer.numberOfChannels; c++) short.copyToChannel(buffer.getChannelData(c).subarray(0, keep), c);
+      buffer = short;
+    }
+  }
 
   audioBuffer = buffer;
   if (wav) {
@@ -81,6 +107,7 @@ export async function decodeFile(file) {
     numberOfChannels: wav ? wav.channels : buffer.numberOfChannels,
     bitDepth: wav ? wav.bitDepth : null,
     nativeRate: Boolean(wav), // false = rate shown is the browser's resampled rate
+    fullDuration, // set when only the first MAX_SECONDS of a longer file were loaded
   };
 }
 

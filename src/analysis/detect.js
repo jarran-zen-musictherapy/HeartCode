@@ -10,6 +10,7 @@ const WORK_RATE_HZ = 2000; // heart sounds sit below ~200 Hz; this keeps 0.5 ms 
 const SPLIT_HZ = 65; // boundary between the S1-dominant and S2-dominant bands
 const MIN_BPM = 30;
 const MAX_BPM = 200;
+const SLOW_BPM = 40; // below this, look for a faster rate hiding inside a looped recording
 
 function smoothEnvelope(x, fs) {
   const sq = new Float64Array(x.length);
@@ -106,6 +107,21 @@ export function estimatePeriod(env, fs, bands = [env]) {
     if (best / k < minLag) continue;
     const local = peakNear(best / k, 0.08);
     if (local > 0 && ac[local] >= 0.9 * ac[best]) { chosen = local; break; }
+  }
+
+  // A recording that is itself a loop (a bounce from a DAW) repeats exactly, so the
+  // loop length scores a near-perfect match and can beat the heartbeat inside it.
+  // A rate under 40 BPM is rarely real: if a whole-number fraction of that period
+  // shows a clear peak at a plausible heart rate, take the strongest such peak.
+  if (60 / (chosen / r) < SLOW_BPM) {
+    let alt = -1;
+    for (let k = 2; k <= 8; k++) {
+      const target = chosen / k;
+      if (target < minLag || 60 / (target / r) > MAX_BPM) break;
+      const local = peakNear(target, 0.05);
+      if (local > 0 && ac[local] >= 0.55 * ac[chosen] && (alt < 0 || ac[local] > ac[alt] + 0.02)) alt = local;
+    }
+    if (alt > 0) chosen = alt;
   }
 
   // Is the reading ambiguous? A strong peak at half the chosen period means the

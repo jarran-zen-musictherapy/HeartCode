@@ -101,3 +101,24 @@ test('analysis is scale-invariant and ignores DC offset and polarity', () => {
     assert.ok(r.ok && Math.abs(r.bpm - 72) < 3);
   }
 });
+
+test('a looped bounce reads the heart rate, not the loop length', () => {
+  // Four beats at 124 BPM, then that exact two-second clip repeated (as a DAW bounce would be).
+  const one = synthHeart({ seconds: 60 / 124 * 4 + 0.4, bpm: 124, systole: 0.2, jitter: 0.04, noise: 0.03, lead: 0.05 });
+  const clipLen = Math.round((60 / 124) * 4 * 4000);
+  const x = new Float32Array(clipLen * 20);
+  for (let r = 0; r < 20; r++) x.set(one.pcm.subarray(0, clipLen), r * clipLen);
+  const res = analyseHeartbeat(x, 4000);
+  assert.ok(res.ok, res.reason);
+  assert.ok(Math.abs(res.bpm - 124) < 10 || (Math.abs(res.bpm - 62) < 2 && res.tempoAmbiguous), `got ${res.bpm.toFixed(1)}`);
+  assert.ok(res.bpm > 45, 'never the loop length');
+});
+
+test('a genuinely slow heart (45 BPM) is still read as slow', () => {
+  const s = synthHeart({ seconds: 40, bpm: 45, systole: 0.38 });
+  const r = analyseHeartbeat(s.pcm, 4000);
+  assert.ok(Math.abs(r.bpm - 45) < 2, `got ${r.bpm.toFixed(1)}`);
+  const slow = synthHeart({ seconds: 60, bpm: 36, systole: 0.4 });
+  const r2 = analyseHeartbeat(slow.pcm, 4000);
+  assert.ok(Math.abs(r2.bpm - 36) < 2, `36 BPM read as ${r2.bpm.toFixed(1)}`);
+});

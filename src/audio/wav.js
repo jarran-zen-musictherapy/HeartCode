@@ -78,3 +78,28 @@ export function parseWav(arrayBuffer) {
     mono,
   };
 }
+
+/**
+ * Where the audio sits in a WAV file, read from just its first bytes. Lets a
+ * very long recording be loaded in part without reading the whole file.
+ * @returns {{ dataOffset: number, dataBytes: number, blockAlign: number, sampleRate: number } | null}
+ */
+export function wavLayout(headBuffer) {
+  const v = new DataView(headBuffer);
+  if (v.byteLength < 44 || tag(v, 0) !== 'RIFF' || tag(v, 8) !== 'WAVE') return null;
+  let fmt = null;
+  let p = 12;
+  while (p + 8 <= v.byteLength) {
+    const id = tag(v, p);
+    const size = v.getUint32(p + 4, true);
+    const body = p + 8;
+    if (id === 'fmt ' && body + 16 <= v.byteLength) {
+      fmt = { sampleRate: v.getUint32(body + 4, true), blockAlign: v.getUint16(body + 12, true) };
+    } else if (id === 'data') {
+      if (!fmt || !fmt.sampleRate || !fmt.blockAlign) return null;
+      return { dataOffset: body, dataBytes: size, ...fmt };
+    }
+    p = body + size + (size & 1);
+  }
+  return null;
+}

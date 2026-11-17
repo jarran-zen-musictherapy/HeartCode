@@ -470,3 +470,8 @@ button.secondary.inline {
   padding-bottom: 0.45rem;
   font-variant-numeric: tabular-nums;
 }
+
+.note.long-file {
+  margin: -0.5rem 0 1rem;
+  color: #ffcc00;
+}

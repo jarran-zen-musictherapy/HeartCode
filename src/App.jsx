@@ -80,6 +80,14 @@ function App() {
         </div>
       )}
 
+      {fileMeta && fileMeta.fullDuration && (
+        <p className="note long-file">
+          This is a long recording ({(fileMeta.fullDuration / 60).toFixed(1)} minutes). Only the first
+          {' '}{(fileMeta.duration / 60).toFixed(0)} minutes are loaded, which is plenty for building a loop.
+          To work on a later part, trim the file first.
+        </p>
+      )}
+
       {fileMeta && (
         <>
           <TransportControls isPlaying={isPlaying} onPlayStateChange={setIsPlaying} />
