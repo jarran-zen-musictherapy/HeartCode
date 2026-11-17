@@ -338,7 +338,7 @@ export default function GridPanel({
         <p className="note">
           Averaged beat: built from {render.averaged.used} of the {render.averaged.total} heartbeats
           {render.averaged.used < render.averaged.total ? ' (the odd ones out were left aside)' : ''}, which lowers
-          random background noise by about {(10 * Math.log10(render.averaged.used)).toFixed(0)} dB. Every beat in the loop is
+          random background noise by up to about {(10 * Math.log10(render.averaged.used)).toFixed(0)} dB. Every beat in the loop is
           identical, so beat-to-beat variation is gone; choose As recorded to keep it.
         </p>
       )}
