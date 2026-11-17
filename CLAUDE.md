@@ -26,9 +26,12 @@ Chain order (src/process/render.js): resample -> hum notch -> spectral noise rem
 - Tempo check (checkTempo in detect.js): a "second sound" under 0.15 s after S1 is not S2; with one sound per beat, alternating loudness or gaps suggests Half. Suggestion only, never auto-applied.
 - Batch (BatchPanel.jsx + 'batch' job): cleanest 16 beats per file, zip with loops, beat CSVs and summary.csv.
 
+- Irregular rhythms: `irregularPeriod` in detect.js catches the case where the autocorrelation locks on to the S1-to-S2 spacing (too few sounds for the claimed rate) and takes the typical S1-to-S1 time instead.
+- Stress-tested (v0.9.1): ~1800 random renders over 30 odd inputs (silence, DC, NaN, clipping, 1 kHz to 192 kHz, 300 s) with no crash, exact loop lengths and the ceiling held; corrupt/empty files, rapid reloads and garbage field values in the browser.
+
 ## Known weak spots
 - Tempo halving/doubling on faint or irregular recordings. Half/Auto/Double override exists; PT004 (128 vs 64 BPM) and Jan (122 vs 61 BPM) need true reference rates; the sounds themselves (even spacing, no alternation) point to the faster reading for both.
-- Irregular/dying rhythms: whole-file analysis is poor; use selection analysis and manual loops.
+- Irregular/dying rhythms: improved but still weak when beats vary by more than about 20%, or when S1 and S2 are evenly spaced; always flagged, never silent. Use selection analysis and manual loops.
 - One tempo per recording. MP3 encoding still runs on the main thread.
 - Averaging and noise removal are verified on synthetic audio only. Tempo ramp not built. MIDI is off for manual loops.
 

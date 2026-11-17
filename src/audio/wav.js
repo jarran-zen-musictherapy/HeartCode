@@ -58,7 +58,11 @@ export function parseWav(arrayBuffer) {
   const stride = bytes * channels;
   for (let i = 0; i < frames; i++) {
     const base = dataOff + i * stride;
-    for (let c = 0; c < keep; c++) channelData[c][i] = read(base + c * bytes);
+    for (let c = 0; c < keep; c++) {
+      // A corrupt float file can hold NaN or Infinity; one such sample would poison every filter.
+      const val = read(base + c * bytes);
+      channelData[c][i] = Number.isFinite(val) ? val : 0;
+    }
   }
 
   let mono = channelData[0];

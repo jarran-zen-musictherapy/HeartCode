@@ -5,6 +5,14 @@
 import { analyseHeartbeat, analyseHeartbeatRange } from '../analysis/detect.js';
 import { createRenderer } from '../process/render.js';
 
+/** Samples with any NaN or Infinity zeroed (the same array back when it is already clean). */
+function clean(pcm) {
+  for (let i = 0; i < pcm.length; i++) {
+    if (!Number.isFinite(pcm[i])) return Float32Array.from(pcm, (v) => (Number.isFinite(v) ? v : 0));
+  }
+  return pcm;
+}
+
 export function createHandler() {
   let data = null;
   let analysis = null;
@@ -14,7 +22,7 @@ export function createHandler() {
   return function handle(msg) {
     switch (msg.type) {
       case 'audio':
-        data = { pcm: msg.pcm, sampleRate: msg.sampleRate };
+        data = { pcm: clean(msg.pcm), sampleRate: msg.sampleRate };
         analysis = null;
         renderer.reset();
         return true;
@@ -37,7 +45,7 @@ export function createHandler() {
         return renderer.oneShots(data, analysis, msg.settings, msg.gain);
       case 'batch': {
         // One whole recording, start to finish, without disturbing the one on screen.
-        const d = { pcm: msg.pcm, sampleRate: msg.sampleRate };
+        const d = { pcm: clean(msg.pcm), sampleRate: msg.sampleRate };
         const a = analyseHeartbeat(d.pcm, d.sampleRate, {});
         if (!a.ok) return { analysis: a, loop: null };
         const usable = a.beats.length - 1;

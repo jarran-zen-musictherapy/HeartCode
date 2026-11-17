@@ -46,6 +46,44 @@ export function heartEnvelope(pcm, sampleRate) {
 }
 
 /**
+ * Rescue for irregular rhythms. When beats come at uneven intervals the only
+ * thing that still repeats exactly is the S1-to-S2 time, so the autocorrelation
+ * locks on to that and reports an absurdly fast rate. The giveaway: there are
+ * far fewer sounds in the recording than that rate would need. In that case
+ * take the sounds that are followed by a partner at that spacing as S1, and use
+ * the typical time between them.
+ * @returns {number|null} a better period in seconds, or null to keep the given one
+ */
+export function irregularPeriod(env, fs, period) {
+  const n = env.length;
+  const sorted = Float64Array.from(env).sort();
+  const thr = 0.25 * sorted[Math.min(n - 1, Math.floor(0.97 * n))];
+  if (!(thr > 0)) return null;
+  const sep = Math.round(0.1 * fs);
+  const events = [];
+  for (let i = 1; i < n - 1; i++) {
+    if (env[i] < thr || env[i] < env[i - 1] || env[i] < env[i + 1]) continue;
+    const last = events[events.length - 1];
+    if (last !== undefined && i - last < sep) {
+      if (env[i] > env[last]) events[events.length - 1] = i;
+    } else events.push(i);
+  }
+  if (events.length < 6) return null;
+  const duration = n / fs;
+  if ((events.length * period) / duration >= 0.8) return null; // enough sounds for the claimed rate
+  const s1 = [];
+  for (let k = 0; k + 1 < events.length; k++) {
+    const gap = (events[k + 1] - events[k]) / fs;
+    if (gap > 0.8 * period && gap < 1.2 * period) s1.push(events[k] / fs);
+  }
+  if (s1.length < 4) return null;
+  const rr = [];
+  for (let k = 1; k < s1.length; k++) rr.push(s1[k] - s1[k - 1]);
+  const typical = median(rr);
+  return typical > 1.3 * period && 60 / typical >= MIN_BPM ? typical : null;
+}
+
+/**
  * Cardiac period (seconds) from the autocorrelation of the band envelopes.
  * Returns { period, strength, ambiguous }. `ambiguous` is true when a heartbeat
  * with two near-identical sounds could equally be read at double the rate
@@ -314,6 +352,8 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
   const { env, fs, bands, hum } = heartEnvelope(pcm, sampleRate);
   const tempo = estimatePeriod(env, fs, bands);
   if (!tempo || tempo.strength < 0.1) return empty('No regular heartbeat found in this recording.');
+  const slower = irregularPeriod(env, fs, tempo.period);
+  if (slower) { tempo.period = slower; tempo.irregular = true; }
   if (opts.tempoFactor === 2 || opts.tempoFactor === 0.5) tempo.period /= opts.tempoFactor;
 
   const cands = findCandidates(env, fs, tempo.period);
@@ -526,6 +566,7 @@ export function analyseHeartbeatRange(pcm, sampleRate, start, end, opts = {}) {
   const b = Math.min(pcm.length, Math.round(Math.max(start, end) * sampleRate));
   const range = { start: a / sampleRate, end: b / sampleRate };
   const r = analyseHeartbeat(pcm.subarray(a, b), sampleRate, opts);
+  if (!r.ok && r.duration < 2) r.reason = 'The selected part is too short to analyse (need at least 2 seconds). Select more, or analyse the whole recording.';
   const shift = (t) => (t === null ? null : t + range.start);
   return {
     ...r,

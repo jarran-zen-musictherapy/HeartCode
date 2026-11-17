@@ -13,6 +13,7 @@ export default function FileLoader({ onFileLoaded }) {
     setError(null);
     try {
       const meta = await decodeFile(file);
+      if (!meta) return; // a newer file took over while this one was decoding
       onFileLoaded({ name: file.name, ...meta });
     } catch (err) {
       console.error('Failed to decode audio file:', err);

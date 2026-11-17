@@ -376,3 +376,17 @@ test('batch: one job analyses a recording and builds its loop on whole bars; the
   // Every row has the same number of columns (quoted commas aside).
   assert.equal(csv[2].split(',').length, SUMMARY_COLUMNS.length);
 });
+
+test('a recording with NaN or Infinity samples still renders clean audio', () => {
+  const h = synthHeart({ sampleRate: 4000, seed: 10, seconds: 15 });
+  h.pcm[5000] = NaN; h.pcm[9000] = Infinity; h.pcm[9001] = -Infinity;
+  const handle = createHandler();
+  handle({ type: 'audio', pcm: h.pcm, sampleRate: 4000 });
+  const a = handle({ type: 'analyse', opts: {} });
+  for (const o of [{}, { denoise: 'medium', noise: 'light', average: true }, { selection: { start: 1, end: 3 } }]) {
+    const { loop } = handle({ type: 'render', analysisId: a.id, settings: { ...SETTINGS, ...o } });
+    assert.ok(loop.samples.every(Number.isFinite));
+  }
+  const b = handle({ type: 'batch', pcm: h.pcm, sampleRate: 4000, settings: { ...SETTINGS, removeHum: true } });
+  assert.ok(b.loop.samples.every(Number.isFinite));
+});

@@ -102,15 +102,27 @@ export async function decodePcm(file) {
     : { pcm: buffer.getChannelData(0), sampleRate: buffer.sampleRate, duration: buffer.duration };
 }
 
+let loadSeq = 0; // counts loads, so a slow decode cannot overwrite a newer file
+
+/** @returns the file's details, or null if another file was loaded while this one was decoding */
 export async function decodeFile(file) {
   getContext();
+  const mine = ++loadSeq;
   loopRegion = null;
   stop(); // never leave a previous file playing
   stopPreview();
   audioBuffer = null;
   analysisPCM = null;
 
-  const { wav, buffer, fullDuration } = await readAudio(file);
+  let read;
+  try {
+    read = await readAudio(file);
+  } catch (err) {
+    if (mine !== loadSeq) return null; // a failed old load must not disturb the newer one
+    throw err;
+  }
+  if (mine !== loadSeq) return null;
+  const { wav, buffer, fullDuration } = read;
 
   audioBuffer = buffer;
   if (wav) {

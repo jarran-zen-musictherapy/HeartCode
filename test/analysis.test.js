@@ -200,3 +200,14 @@ test('a "second sound" closer than the heart can physically manage is not report
   assert.ok(r.beats.every((b) => b.s2 === null));
   assert.equal(r.s2Found, false);
 });
+
+test('irregular rhythm: the rate is not mistaken for the S1-to-S2 spacing', () => {
+  for (const bpm of [55, 72]) {
+    for (const seed of [1, 2, 3]) {
+      const h = synthHeart({ bpm, jitter: 0.15, seed, seconds: 30, noise: 0.05 });
+      const real = 60 / ((h.s1[h.s1.length - 1] - h.s1[0]) / (h.s1.length - 1));
+      const r = analyseHeartbeat(h.pcm, 4000);
+      assert.ok(r.ok && Math.abs(r.bpm / real - 1) < 0.1, `${bpm} BPM seed ${seed}: got ${r.bpm && r.bpm.toFixed(1)}, real ${real.toFixed(1)}`);
+    }
+  }
+});
