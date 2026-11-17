@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyseHeartbeat } from '../src/analysis/detect.js';
+import { analyseHeartbeat, analyseHeartbeatRange } from '../src/analysis/detect.js';
 import { median } from '../src/analysis/filters.js';
 import { synthHeart } from './synth.js';
 
@@ -149,4 +149,25 @@ test('stray noises away from the heartbeat do not become beats', () => {
   for (const t of [15.0, 17.3]) for (let i = 0; i < 300; i++) x[Math.round(t * 4000) + i] += 0.8 * Math.sin(i / 5) * Math.exp(-i / 80);
   const r = analyseHeartbeat(x, 4000);
   assert.equal(r.beats.filter((b) => b.s1 > 13).length, 0);
+});
+
+test('analysing a selection ignores the mess around it and reports whole-file times', () => {
+  // 8 s of loud scratchy noise, then 15 s of heartbeat, then more noise.
+  const s = synthHeart({ seconds: 15, bpm: 70, noise: 0.02 });
+  const x = new Float32Array(4000 * 31);
+  let st = 3;
+  const rnd = () => { st = (st * 1664525 + 1013904223) >>> 0; return st / 4294967296 - 0.5; };
+  for (let i = 0; i < 4000 * 8; i++) x[i] = 1.5 * rnd() * Math.sin(i / 11) * (1 + Math.sin(i / 900));
+  x.set(s.pcm, 4000 * 8);
+  for (let i = 4000 * 23; i < x.length; i++) x[i] = 1.5 * rnd() * Math.sin(i / 7);
+  const r = analyseHeartbeatRange(x, 4000, 8, 23);
+  assert.ok(r.ok, r.reason);
+  assert.deepEqual(r.range, { start: 8, end: 23 });
+  assert.ok(Math.abs(r.bpm - 70) < 2, `bpm ${r.bpm}`);
+  assert.ok(r.beats.length >= s.s1.length - 1);
+  assert.ok(r.beats.every((b) => b.s1 > 8 && b.s1 < 23), 'beat times are in whole-file seconds');
+  assert.ok(Math.abs(r.beats[0].s1Onset - (8 + s.s1[0])) < 0.06);
+  const tooShort = analyseHeartbeatRange(x, 4000, 10, 11);
+  assert.equal(tooShort.ok, false);
+  assert.deepEqual(tooShort.beats, []);
 });

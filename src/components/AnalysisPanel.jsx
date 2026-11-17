@@ -16,7 +16,27 @@ function Stat({ label, value, unit }) {
   );
 }
 
-export default function AnalysisPanel({ analysis, swapAnchor, onSwapAnchor, tempoFactor, onTempoFactor }) {
+export default function AnalysisPanel({
+  analysis, swapAnchor, onSwapAnchor, tempoFactor, onTempoFactor, selection, onAnalyseSelection, onAnalyseAll,
+}) {
+  // Choose what gets analysed: everything, or just the selected part.
+  const range = analysis ? analysis.range : null;
+  const scope = (selection || range) ? (
+    <div className="tempo-fix">
+      {range && (
+        <span className="note">
+          Analysing only {range.start.toFixed(2)} s to {range.end.toFixed(2)} s.
+        </span>
+      )}
+      {selection && (
+        <button className="secondary" onClick={onAnalyseSelection}>
+          {range ? 'Re-analyse the current selection' : 'Analyse the selection only'}
+        </button>
+      )}
+      {range && <button className="secondary" onClick={onAnalyseAll}>Analyse the whole recording</button>}
+    </div>
+  ) : null;
+
   if (!analysis) {
     return (
       <div className="analysis-panel">
@@ -31,6 +51,13 @@ export default function AnalysisPanel({ analysis, swapAnchor, onSwapAnchor, temp
       <div className="analysis-panel">
         <h3 className="section-label">Analysis</h3>
         <p className="error-text">{analysis.reason}</p>
+        {!selection && !range && (
+          <p className="note">
+            If only part of this recording is heartbeat, select that part on the waveform (Select loop), then
+            analyse just the selection.
+          </p>
+        )}
+        {scope}
       </div>
     );
   }
@@ -51,6 +78,7 @@ export default function AnalysisPanel({ analysis, swapAnchor, onSwapAnchor, temp
         {hrv && hrv.rmssd !== null && <Stat label="RMSSD" value={hrv.rmssd.toFixed(0)} unit="ms" />}
         <Stat label="Regularity" value={(regularity * 100).toFixed(0)} unit="%" />
       </div>
+      {scope}
       <p className="note">{METHOD_TEXT[anchorMethod]}</p>
       {hum > 0 && (
         <p className="note">{hum} Hz mains hum detected and filtered out before analysis.</p>
@@ -62,8 +90,9 @@ export default function AnalysisPanel({ analysis, swapAnchor, onSwapAnchor, temp
       )}
       {lowConfidence && (
         <p className="error-text">
-          Low confidence: the rhythm is irregular or beats were missed. Check the markers against
-          the waveform before using these numbers.
+          The rhythm here is irregular, or some beats were missed. Check the markers against the waveform
+          before relying on these numbers. For an irregular heartbeat, a hand-picked loop keeps the rhythm
+          as it really was.
         </p>
       )}
       {(tempoAmbiguous || tempoFactor !== 1) && (

@@ -10,6 +10,7 @@ let playing = false;
 let startTime = 0;
 let pauseOffset = 0;
 let analyserBins = null;
+let loopRegion = null; // { start, end } in seconds: when set, Play loops this part of the file
 
 // Raw samples at the file's native rate, for analysis (never resampled).
 let analysisPCM = null;
@@ -50,6 +51,7 @@ function killSource() {
 
 export async function decodeFile(file) {
   const ctx = getContext();
+  loopRegion = null;
   stop(); // never leave a previous file playing
   stopPreview();
   audioBuffer = null;
@@ -111,10 +113,19 @@ export async function decodeFile(file) {
   };
 }
 
+const inRegion = (t) => loopRegion && t >= loopRegion.start && t < loopRegion.end;
+
 function startSource(offset) {
   const ctx = getContext();
+  let from = offset;
   sourceNode = ctx.createBufferSource();
   sourceNode.buffer = audioBuffer;
+  if (loopRegion) {
+    if (!inRegion(from)) from = loopRegion.start;
+    sourceNode.loop = true;
+    sourceNode.loopStart = loopRegion.start;
+    sourceNode.loopEnd = loopRegion.end;
+  }
   sourceNode.connect(gainNode);
   sourceNode.onended = () => {
     playing = false;
@@ -122,9 +133,27 @@ function startSource(offset) {
     sourceNode = null;
     endedListeners.forEach((cb) => cb());
   };
-  sourceNode.start(0, offset);
-  startTime = ctx.currentTime - offset;
+  sourceNode.start(0, from);
+  startTime = ctx.currentTime - from;
   playing = true;
+}
+
+/**
+ * Make Play loop one part of the recording (pass null to play the whole file again).
+ * Takes effect at once if audio is playing.
+ */
+export function setLoopRegion(region) {
+  const ok = region && audioBuffer && region.end - region.start >= 0.05;
+  const at = getCurrentTime();
+  loopRegion = ok
+    ? { start: Math.max(0, region.start), end: Math.min(audioBuffer.duration, region.end) }
+    : null;
+  if (playing) {
+    killSource();
+    startSource(at);
+  } else if (loopRegion && !inRegion(pauseOffset)) {
+    pauseOffset = loopRegion.start;
+  }
 }
 
 export function play() {
@@ -138,20 +167,21 @@ export function play() {
 
 export function pause() {
   if (!playing) return;
-  pauseOffset = Math.min(audioContext.currentTime - startTime, audioBuffer.duration);
+  pauseOffset = getCurrentTime();
   killSource();
   playing = false;
 }
 
 export function stop() {
   killSource();
-  pauseOffset = 0;
+  pauseOffset = loopRegion ? loopRegion.start : 0;
   playing = false;
 }
 
 export function seek(seconds) {
   if (!audioBuffer) return;
-  const t = Math.max(0, Math.min(seconds, audioBuffer.duration));
+  let t = Math.max(0, Math.min(seconds, audioBuffer.duration));
+  if (loopRegion && !inRegion(t)) t = loopRegion.start; // while a loop is selected, playback stays inside it
   if (playing) {
     killSource();
     startSource(t);
@@ -163,7 +193,11 @@ export function seek(seconds) {
 export function getCurrentTime() {
   if (!audioBuffer) return 0;
   if (!playing) return pauseOffset;
-  return Math.min(audioContext.currentTime - startTime, audioBuffer.duration);
+  let t = audioContext.currentTime - startTime;
+  if (loopRegion && t >= loopRegion.end) {
+    t = loopRegion.start + ((t - loopRegion.start) % (loopRegion.end - loopRegion.start));
+  }
+  return Math.min(t, audioBuffer.duration);
 }
 
 export function getDuration() {

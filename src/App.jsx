@@ -5,8 +5,8 @@ import WaveformDisplay from './components/WaveformDisplay.jsx';
 import SpectrumAnalyser from './components/SpectrumAnalyser.jsx';
 import AnalysisPanel from './components/AnalysisPanel.jsx';
 import GridPanel from './components/GridPanel.jsx';
-import { getAnalysisData, onEnded } from './audio/engine.js';
-import { analyseHeartbeat } from './analysis/detect.js';
+import { getAnalysisData, onEnded, setLoopRegion } from './audio/engine.js';
+import { analyseHeartbeat, analyseHeartbeatRange } from './analysis/detect.js';
 import { encodeWav } from './export/wavEncode.js';
 
 function App() {
@@ -18,6 +18,7 @@ function App() {
   const [tempoFactor, setTempoFactor] = useState(1); // 1, 0.5 or 2: manual half/double override
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [selection, setSelection] = useState(null); // hand-picked loop region { start, end } in seconds
+  const [analysisRange, setAnalysisRange] = useState(null); // analyse only this part, or null for everything
 
   // Keep the buttons honest when playback reaches the end by itself.
   useEffect(() => onEnded(() => setIsPlaying(false)), []);
@@ -29,10 +30,16 @@ function App() {
     if (!data) return undefined;
     // Defer one tick so the waveform paints before the number crunching.
     const id = setTimeout(() => {
-      setAnalysis(analyseHeartbeat(data.pcm, data.sampleRate, { swapAnchor, tempoFactor }));
+      const opts = { swapAnchor, tempoFactor };
+      setAnalysis(analysisRange
+        ? analyseHeartbeatRange(data.pcm, data.sampleRate, analysisRange.start, analysisRange.end, opts)
+        : analyseHeartbeat(data.pcm, data.sampleRate, opts));
     }, 0);
     return () => clearTimeout(id);
-  }, [fileMeta, fileVersion, swapAnchor, tempoFactor]);
+  }, [fileMeta, fileVersion, swapAnchor, tempoFactor, analysisRange]);
+
+  // While a loop is selected, Play loops just that part.
+  useEffect(() => { setLoopRegion(selection); }, [selection, fileVersion]);
 
   function handleFileLoaded(meta) {
     setIsPlaying(false);
@@ -40,6 +47,7 @@ function App() {
     setSwapAnchor(false);
     setTempoFactor(1);
     setSelection(null);
+    setAnalysisRange(null);
     setFileMeta(meta);
     setFileVersion((v) => v + 1);
   }
@@ -92,7 +100,7 @@ function App() {
 
       {fileMeta && (
         <>
-          <TransportControls isPlaying={isPlaying} onPlayStateChange={setIsPlaying} />
+          <TransportControls isPlaying={isPlaying} onPlayStateChange={setIsPlaying} hasSelection={Boolean(selection)} />
           <WaveformDisplay
             version={fileVersion}
             isPlaying={isPlaying}
@@ -106,6 +114,9 @@ function App() {
             onSwapAnchor={() => setSwapAnchor((s) => !s)}
             tempoFactor={tempoFactor}
             onTempoFactor={setTempoFactor}
+            selection={selection}
+            onAnalyseSelection={() => { setSwapAnchor(false); setTempoFactor(1); setAnalysisRange(selection); }}
+            onAnalyseAll={() => { setSwapAnchor(false); setTempoFactor(1); setAnalysisRange(null); }}
           />
           {analysis && (analysis.ok || selection) && (
             <GridPanel
@@ -113,6 +124,7 @@ function App() {
               analysis={analysis}
               selection={selection}
               onSelection={setSelection}
+              onAnalyseSelection={() => { setSwapAnchor(false); setTempoFactor(1); setAnalysisRange(selection); }}
               fileName={fileMeta.name}
               onPreviewChange={setIsPreviewing}
             />

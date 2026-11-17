@@ -29,7 +29,7 @@ function download(data, name, type) {
 }
 
 export default function GridPanel({
-  analysis, fileName, selection, onSelection, onPreviewChange: reportPreview,
+  analysis, fileName, selection, onSelection, onAnalyseSelection, onPreviewChange: reportPreview,
 }) {
   // The panel also works when no heartbeat was found, for hand-picked loops.
   const autoBpm = analysis.ok ? analysis.bpm : 60;
@@ -277,13 +277,20 @@ export default function GridPanel({
               </select>
             </label>
             {manual && <button onClick={snapSelection}>Snap to a perfect loop</button>}
+            <button
+              onClick={() => { onAnalyseSelection(); setSourceMode('auto'); }}
+              title="Analyse just the selected part and build the automatic loop from the beats inside it"
+            >
+              Smart loop from this selection
+            </button>
           </div>
           {manual && fresh && (
             <>
               <p className="note">
                 Your selection: {selection.start.toFixed(3)} s to {selection.end.toFixed(3)} s ({render.seconds.toFixed(3)} s long)
                 {render.beats > 0 ? `, ${render.beats} ${render.beats === 1 ? 'heartbeat' : 'heartbeats'}, about ${render.bpm} BPM as recorded` : ''}.
-                It plays at its recorded speed; tempo, loop length and nudge apply only to the automatic grid.
+                It plays exactly as recorded, irregular rhythm included; tempo, loop length and nudge apply only to the
+                automatic grid.
               </p>
               {render.report.smooth ? (
                 <p className="note seam-ok">
@@ -305,7 +312,13 @@ export default function GridPanel({
             </>
           )}
         </div>
-      ) : (
+      ) : null}
+      {analysis.range && !manual && (
+        <p className="note">
+          Automatic loop built from the heartbeat between {analysis.range.start.toFixed(2)} s and {analysis.range.end.toFixed(2)} s only.
+        </p>
+      )}
+      {selection ? null : (
         <p className="note">
           Want to choose the loop yourself? Turn on Select loop above the waveform and drag across the part you want.
         </p>

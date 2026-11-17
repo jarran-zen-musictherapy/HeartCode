@@ -445,3 +445,23 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
     shortRecording: duration < 30, // HRV from under 30 s is indicative only
   };
 }
+
+/**
+ * Analyse only part of a recording (seconds `start` to `end`). Beat times in the
+ * result are in whole-file time, so markers and loops line up with the waveform.
+ * Useful when the rest of the recording is talking, handling noise or silence.
+ */
+export function analyseHeartbeatRange(pcm, sampleRate, start, end, opts = {}) {
+  const a = Math.max(0, Math.round(Math.min(start, end) * sampleRate));
+  const b = Math.min(pcm.length, Math.round(Math.max(start, end) * sampleRate));
+  const range = { start: a / sampleRate, end: b / sampleRate };
+  const r = analyseHeartbeat(pcm.subarray(a, b), sampleRate, opts);
+  const shift = (t) => (t === null ? null : t + range.start);
+  return {
+    ...r,
+    range,
+    beats: r.beats.map((bt) => ({
+      ...bt, s1: shift(bt.s1), s1Onset: shift(bt.s1Onset), s2: shift(bt.s2), s2Onset: shift(bt.s2Onset),
+    })),
+  };
+}
