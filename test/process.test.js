@@ -345,3 +345,34 @@ test('worker jobs: audio, analyse, render in order; stale renders are refused', 
   assert.deepEqual(handle({ type: 'render', analysisId: a1.id, settings: SETTINGS }), { stale: true });
   assert.throws(() => handle({ type: 'nope' }));
 });
+
+import { summaryCsv, SUMMARY_COLUMNS } from '../src/export/summary.js';
+import { EQ_PRESETS as PRESETS } from '../src/process/eq.js';
+
+test('batch: one job analyses a recording and builds its loop on whole bars; the summary has a row per file', () => {
+  const handle = createHandler();
+  const settings = { ...SETTINGS, removeHum: true, eq: PRESETS.gentle.make() };
+  delete settings.bpm; delete settings.count; delete settings.humHz;
+  const h = synthHeart({ sampleRate: 4000, seed: 9, seconds: 20, bpm: 80 });
+  const good = handle({ type: 'batch', pcm: h.pcm, sampleRate: 4000, settings });
+  assert.ok(good.analysis.ok && good.loop);
+  assert.equal(good.loop.bpm, 80);
+  assert.equal(good.loop.beats % 4, 0);
+  assert.equal(good.loop.samples.length, Math.round((good.loop.beats * 60 / 80) * 44100));
+  const bad = handle({ type: 'batch', pcm: new Float32Array(4000 * 5), sampleRate: 4000, settings });
+  assert.ok(!bad.analysis.ok && bad.loop === null);
+
+  const csv = summaryCsv([
+    { name: 'a, "quoted".wav', analysis: good.analysis, loop: good.loop, loopFile: 'a_80bpm.wav' },
+    { name: 'silent.wav', analysis: bad.analysis, loop: null },
+    { name: 'broken.mp4', error: 'Could not read audio from this file' },
+  ]).trimEnd().split('\r\n');
+  assert.equal(csv.length, 4);
+  assert.equal(csv[0], SUMMARY_COLUMNS.join(','));
+  assert.match(csv[1], /^"a, ""quoted""\.wav",ok,20\.00,(79\.[5-9]|80\.[0-4]),/);
+  assert.ok(csv[1].includes(',a_80bpm.wav,80,'));
+  assert.ok(csv[2].startsWith('silent.wav,') && !csv[2].includes(',ok,'));
+  assert.ok(csv[3].startsWith('broken.mp4,Could not read audio'));
+  // Every row has the same number of columns (quoted commas aside).
+  assert.equal(csv[2].split(',').length, SUMMARY_COLUMNS.length);
+});

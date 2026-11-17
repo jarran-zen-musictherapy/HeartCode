@@ -63,7 +63,7 @@ export default function AnalysisPanel({
   }
 
   const {
-    bpm, beats, hrv, anchorMethod, s2Found, regularity, coverage, shortRecording, tempoAmbiguous, hum,
+    bpm, beats, hrv, anchorMethod, s2Found, regularity, coverage, shortRecording, tempoAmbiguous, hum, tempoCheck,
   } = analysis;
   const lowConfidence = regularity < 0.4 || coverage < 0.8;
 
@@ -77,6 +77,7 @@ export default function AnalysisPanel({
         {hrv && <Stat label="SDNN" value={hrv.sdnn.toFixed(0)} unit="ms" />}
         {hrv && hrv.rmssd !== null && <Stat label="RMSSD" value={hrv.rmssd.toFixed(0)} unit="ms" />}
         <Stat label="Regularity" value={(regularity * 100).toFixed(0)} unit="%" />
+        {tempoCheck.s1s2 !== null && <Stat label="S1 to S2" value={(tempoCheck.s1s2 * 1000).toFixed(0)} unit="ms" />}
       </div>
       {scope}
       <p className="note">{METHOD_TEXT[anchorMethod]}</p>
@@ -95,7 +96,20 @@ export default function AnalysisPanel({
           as it really was.
         </p>
       )}
-      {(tempoAmbiguous || tempoFactor !== 1) && (
+      {tempoCheck.suggest === 'half' && (
+        <p className="error-text">
+          Tempo check: these beats alternate (louder then softer, or a short gap then a long one). That
+          usually means both heart sounds are being counted as beats, and the real rate is about
+          {' '}{(bpm / 2).toFixed(0)} BPM. Try Half (÷2).
+        </p>
+      )}
+      {tempoCheck.soundsPerBeat === 1 && !tempoCheck.suggest && (
+        <p className="note">
+          Tempo check: the beats are alike and evenly spaced, so {bpm.toFixed(0)} BPM is the likelier reading
+          than {(bpm / 2).toFixed(0)}. (The second heart sound is too faint or too close to pick out.)
+        </p>
+      )}
+      {(tempoAmbiguous || tempoFactor !== 1) && !tempoCheck.suggest && (
         <p className="error-text">
           The tempo could be read as double or half of {bpm.toFixed(0)} BPM (the two heart sounds are
           nearly identical and evenly spaced). Check the markers: there should be one green line per beat.

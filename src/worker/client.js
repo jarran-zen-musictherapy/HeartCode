@@ -97,3 +97,8 @@ export function renderLoop(analysisId, settings) {
 export function oneShots(analysisId, settings, gain) {
   return call({ type: 'oneShots', analysisId, settings, gain });
 }
+
+/** Analyse one recording and build its loop, independently of the one on screen. */
+export function batchOne(pcm, sampleRate, settings) {
+  return call({ type: 'batch', pcm, sampleRate, settings });
+}

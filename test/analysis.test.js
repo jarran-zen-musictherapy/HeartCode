@@ -171,3 +171,32 @@ test('analysing a selection ignores the mess around it and reports whole-file ti
   assert.equal(tooShort.ok, false);
   assert.deepEqual(tooShort.beats, []);
 });
+
+test('tempo check: both sounds counted as beats is spotted by their alternation; a true single-sound rhythm is not', () => {
+  for (const seed of [1, 2, 3]) {
+    // 50 BPM with S2 exactly half-way and quieter, read at double tempo.
+    const slow = synthHeart({ bpm: 50, systole: 0.6, s2Amp: 0.6, seed, seconds: 30 });
+    const doubled = analyseHeartbeat(slow.pcm, 4000, { tempoFactor: 2 });
+    assert.equal(doubled.tempoCheck.soundsPerBeat, 1);
+    assert.equal(doubled.tempoCheck.suggest, 'half');
+    assert.ok(doubled.tempoAmbiguous);
+    // 120 BPM with no audible S2: nothing alternates, so no suggestion.
+    const fast = synthHeart({ bpm: 120, s2Amp: 0, seed, seconds: 30, noise: 0.05 });
+    const r = analyseHeartbeat(fast.pcm, 4000);
+    assert.ok(Math.abs(r.bpm - 120) < 2);
+    assert.equal(r.tempoCheck.suggest, null);
+    // An ordinary recording reports its S1-to-S2 time.
+    const normal = analyseHeartbeat(synthHeart({ bpm: 72, seed, seconds: 30 }).pcm, 4000);
+    assert.equal(normal.tempoCheck.soundsPerBeat, 2);
+    assert.ok(Math.abs(normal.tempoCheck.s1s2 - 0.32) < 0.03);
+  }
+});
+
+test('a "second sound" closer than the heart can physically manage is not reported as S2', () => {
+  // S1 with a strong echo 90 ms later and no real S2.
+  const h = synthHeart({ bpm: 125, systole: 0.09, s2Amp: 0.7, seed: 4, seconds: 25 });
+  const r = analyseHeartbeat(h.pcm, 4000);
+  assert.ok(r.ok && Math.abs(r.bpm - 125) < 3);
+  assert.ok(r.beats.every((b) => b.s2 === null));
+  assert.equal(r.s2Found, false);
+});

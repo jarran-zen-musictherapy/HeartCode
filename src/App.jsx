@@ -5,6 +5,7 @@ import WaveformDisplay from './components/WaveformDisplay.jsx';
 import SpectrumAnalyser from './components/SpectrumAnalyser.jsx';
 import AnalysisPanel from './components/AnalysisPanel.jsx';
 import GridPanel from './components/GridPanel.jsx';
+import BatchPanel from './components/BatchPanel.jsx';
 import { getAnalysisData, onEnded, setLoopRegion } from './audio/engine.js';
 import { setAudio, analyse } from './worker/client.js';
 import { encodeWav } from './export/wavEncode.js';
@@ -74,6 +75,7 @@ function App() {
       <p className="subtitle">Audio Processing for Clinical Music Therapy</p>
 
       <FileLoader onFileLoaded={handleFileLoaded} />
+      <BatchPanel />
 
       {fileMeta && (
         <div className="file-info">

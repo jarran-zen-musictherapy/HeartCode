@@ -25,6 +25,10 @@ diagnosis or clinical decisions.
 3. Set the tempo and loop length, preview with the metronome, then export the loop or
    the individual beats.
 
+Extras: **Averaged** beats and **Noise removal** for noisy recordings, **Snap to beats**
+when picking a loop by hand, a **tempo check** that warns when both heart sounds are being
+counted as beats, and **Batch** for a whole folder of recordings.
+
 ## Run it
 
 ```
@@ -82,6 +86,8 @@ npm run build:standalone  # one HTML file that opens by double-click
 * `src/process/render.js` is the whole loop-building chain in one function, and
   `src/worker/` runs it and the analysis in a background worker so the page never
   freezes (with an automatic fallback to the page itself if workers are unavailable).
+* `src/components/BatchPanel.jsx` processes many recordings in one go: a loop and a beat
+  table for each, plus `summary.csv` (one row per recording).
 * `src/export/` writes 24-bit WAV files, a plain zip for the one-shots, MP3 (via lamejs, LGPL-3.0), a MIDI file
   (S1 on C1 on every beat, S2 on D1 at its natural offset) and a beat-by-beat CSV.
 
@@ -101,6 +107,9 @@ npm run build:standalone  # one HTML file that opens by double-click
 * Beat averaging and noise removal are verified by measurement on synthetic recordings,
   not by clinical listening tests. Averaging makes every beat identical, so it removes
   beat-to-beat variation; it suits steady rhythms, not irregular ones.
+* The tempo check (half/double) only makes a suggestion; it has been tried on a handful
+  of real recordings. Without a reference pulse, a fast heart with a faint S2 and a slow
+  heart with evenly spaced sounds can still be confused.
 * One tempo per recording: if the heart rate changes sharply mid-file, the median is reported.
 * Stereo files are mixed to mono as (L+R)/2; only the first two channels are read.
 * When S1 and S2 are equally spaced the tempo is ambiguous: the app flags it and offers Half/Double.

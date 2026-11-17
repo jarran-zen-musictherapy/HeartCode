@@ -489,3 +489,20 @@ button.secondary.inline {
 }
 
 .seam-ok { color: #00ff88; }
+
+.batch-panel {
+  margin: 0.5rem 0 1rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #2a2a4e;
+  border-radius: 6px;
+  font-size: 0.9rem;
+}
+
+.batch-panel summary {
+  cursor: pointer;
+  color: #aaa;
+}
+
+.batch-panel input[type='file'] {
+  margin: 0.25rem 0 0.5rem;
+}

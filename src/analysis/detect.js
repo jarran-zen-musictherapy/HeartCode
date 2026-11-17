@@ -389,6 +389,15 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
   while (beats.length && partial(beats[0])) beats.shift();
   if (beats.length < 2) return empty('Too few complete heartbeats detected.');
 
+  // The heart cannot empty in under about 0.15 s, so a "second sound" closer
+  // than that is the tail of S1, not S2. Do not report it as one.
+  const gaps = beats.filter((b) => b.s2 !== null).map((b) => b.s2 - b.s1);
+  if (gaps.length && median(gaps) < MIN_SYSTOLE_S) {
+    for (const b of beats) { b.s2 = null; b.s2Onset = null; }
+    paired = false;
+    anchorMethod = 'single';
+  }
+
   // Noise can drag an individual onset early or late. Peaks are far steadier,
   // so pull any onset whose peak-to-onset lag is an outlier back to the median lag.
   for (const [peak, onset] of [['s1', 's1Onset'], ['s2', 's2Onset']]) {
@@ -422,6 +431,8 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
     hrv = { meanRR: mean, sdnn, rmssd: nd ? Math.sqrt(sq / nd) : null };
   }
 
+  const tempoCheck = checkTempo(beats, medRR, paired);
+
   // Beats we would expect between the first and last marker. A long silence between
   // two stretches of heartbeat is a pause in the recording, not missed beats.
   const beatLen = 60 / bpm;
@@ -439,11 +450,70 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
     regularity: tempo.strength, // 0..1 autocorrelation strength
     // Evenly spaced sounds (S1 picked by loudness) are exactly the case where a
     // heartbeat and half a heartbeat look alike, so flag that too.
-    tempoAmbiguous: tempo.ambiguous || anchorMethod === 'loudness',
+    tempoAmbiguous: tempo.ambiguous || anchorMethod === 'loudness' || tempoCheck.suggest !== null,
+    tempoCheck, // what the sounds themselves say about half/double tempo
     coverage: Math.min(1, beats.length / expected), // share of expected beats found
     hum, // 0, 50 or 60: mains hum found (and filtered out for the analysis)
     shortRecording: duration < 30, // HRV from under 30 s is indicative only
   };
+}
+
+const MIN_SYSTOLE_S = 0.13;
+
+/**
+ * A second opinion on half/double tempo, from the sounds themselves.
+ * With two sounds per beat (S1 and S2) the tempo is well pinned down. With one
+ * sound per beat there are two readings: a fast heart whose S2 is too faint to
+ * hear, or a slow heart whose S1 and S2 are both being counted as beats. In the
+ * second case the "beats" alternate: louder/softer, or short gap/long gap.
+ * @returns {{ soundsPerBeat: 1|2, s1s2: number|null, alternating: boolean, suggest: 'half'|null }}
+ */
+export function checkTempo(beats, medRR, paired) {
+  if (paired) {
+    const d = beats.filter((b) => b.s2Onset !== null).map((b) => b.s2Onset - b.s1Onset);
+    return { soundsPerBeat: 2, s1s2: d.length ? median(d) : null, alternating: false, suggest: null };
+  }
+  // Split into runs of steady beats; within each, compare every beat with the next.
+  const amp = { sum: 0, sq: 0, n: 0 };
+  const gap = { sum: 0, sq: 0, n: 0 };
+  let run = [];
+  const flush = () => {
+    if (run.length >= 5) {
+      const a = []; const g = [];
+      for (let i = 0; i + 1 < run.length; i++) {
+        const sign = i % 2 ? -1 : 1;
+        a.push(sign * Math.log((run[i + 1].s1Amp || 1e-12) / (run[i].s1Amp || 1e-12)));
+        if (i + 2 < run.length) {
+          g.push(sign * ((run[i + 2].s1Onset - run[i + 1].s1Onset) - (run[i + 1].s1Onset - run[i].s1Onset)) / (2 * medRR));
+        }
+      }
+      for (const [acc, v] of [[amp, a], [gap, g]]) {
+        if (!v.length) continue;
+        const m = v.reduce((x, y) => x + y, 0) / v.length;
+        const flip = m < 0 ? -1 : 1; // which of the two sounds comes first in this run is arbitrary
+        for (const x of v) { acc.sum += flip * x; acc.sq += x * x; acc.n++; }
+      }
+    }
+    run = [];
+  };
+  for (let k = 0; k < beats.length; k++) {
+    if (k > 0) {
+      const rr = beats[k].s1Onset - beats[k - 1].s1Onset;
+      if (rr < 0.6 * medRR || rr > 1.5 * medRR) flush();
+    }
+    run.push(beats[k]);
+  }
+  flush();
+  const stat = (acc) => {
+    if (acc.n < 6) return { mean: 0, t: 0 };
+    const mean = acc.sum / acc.n;
+    const sd = Math.sqrt(Math.max(1e-12, acc.sq / acc.n - mean * mean));
+    return { mean, t: (mean / sd) * Math.sqrt(acc.n) };
+  };
+  const a = stat(amp);
+  const g = stat(gap);
+  const alternating = (Math.exp(a.mean) >= 1.25 && a.t >= 4) || (g.mean >= 0.05 && g.t >= 4);
+  return { soundsPerBeat: 1, s1s2: null, alternating, suggest: alternating ? 'half' : null };
 }
 
 /**

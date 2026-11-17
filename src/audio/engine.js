@@ -49,14 +49,9 @@ function killSource() {
   sourceNode = null;
 }
 
-export async function decodeFile(file) {
+/** Read a file into an AudioBuffer (plus the WAV details when it is one). Touches no playback state. */
+async function readAudio(file) {
   const ctx = getContext();
-  loopRegion = null;
-  stop(); // never leave a previous file playing
-  stopPreview();
-  audioBuffer = null;
-  analysisPCM = null;
-
   // For a long WAV, read only the first MAX_SECONDS from disk.
   let arrayBuffer = null;
   let fullDuration = null;
@@ -93,6 +88,29 @@ export async function decodeFile(file) {
       buffer = short;
     }
   }
+  return { wav, buffer, fullDuration };
+}
+
+/**
+ * Just the samples of a file, for batch work: nothing is loaded into the player.
+ * @returns {Promise<{ pcm: Float32Array, sampleRate: number, duration: number }>}
+ */
+export async function decodePcm(file) {
+  const { wav, buffer } = await readAudio(file);
+  return wav
+    ? { pcm: wav.mono, sampleRate: wav.sampleRate, duration: buffer.duration }
+    : { pcm: buffer.getChannelData(0), sampleRate: buffer.sampleRate, duration: buffer.duration };
+}
+
+export async function decodeFile(file) {
+  getContext();
+  loopRegion = null;
+  stop(); // never leave a previous file playing
+  stopPreview();
+  audioBuffer = null;
+  analysisPCM = null;
+
+  const { wav, buffer, fullDuration } = await readAudio(file);
 
   audioBuffer = buffer;
   if (wav) {

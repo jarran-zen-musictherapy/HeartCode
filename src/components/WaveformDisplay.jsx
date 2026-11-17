@@ -14,6 +14,8 @@ export default function WaveformDisplay({ version, isPlaying, analysis, selectio
   const viewRef = useRef({ start: 0, end: 0, version: -1 }); // visible time range, kept across redraws
   const apiRef = useRef({});
   const [selectMode, setSelectMode] = useState(false);
+  const [snapMode, setSnapMode] = useState(true); // loop edges jump to the nearest heartbeat start
+  const snapRef = useRef(snapMode);
   // Latest selection / mode / callback, readable from the long-lived pointer handlers.
   const selRef = useRef(selection);
   const modeRef = useRef(selectMode);
@@ -21,9 +23,10 @@ export default function WaveformDisplay({ version, isPlaying, analysis, selectio
   useEffect(() => {
     selRef.current = selection;
     modeRef.current = selectMode;
+    snapRef.current = snapMode;
     onSelectionRef.current = onSelection;
     apiRef.current.draw?.();
-  }, [selection, selectMode, onSelection]);
+  }, [selection, selectMode, snapMode, onSelection]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -235,6 +238,20 @@ export default function WaveformDisplay({ version, isPlaying, analysis, selectio
       selRef.current = { start: clamp(Math.min(a, b), 0, duration), end: clamp(Math.max(a, b), 0, duration) };
       draw();
     };
+    // While dragging a loop edge, jump to a heartbeat start when one is within a few
+    // pixels (hold Alt to place the edge freely). A beat "starts" just before its S1.
+    function snapTime(t, e) {
+      if (!snapRef.current || e.altKey || !beats.length) return t;
+      const reach = (10 / width) * (view.end - view.start);
+      let best = t;
+      let bestD = reach;
+      for (const b of beats) {
+        const at = Math.max(0, b.s1Onset - 0.02);
+        const d = Math.abs(at - t);
+        if (d < bestD) { bestD = d; best = at; }
+      }
+      return best;
+    }
     function edgeAt(x) {
       const sel = selRef.current;
       if (!sel) return null;
@@ -252,7 +269,7 @@ export default function WaveformDisplay({ version, isPlaying, analysis, selectio
         const sel = selRef.current;
         drag = { kind: 'select', anchor: edge === 'start' ? sel.end : sel.start };
       } else if (e.shiftKey || modeRef.current) {
-        drag = { kind: 'select', anchor: timeAt(x), fresh: true };
+        drag = { kind: 'select', anchor: snapTime(timeAt(x), e), fresh: true };
       } else {
         drag = { kind: 'pan', x: e.clientX, start: view.start, moved: false };
       }
@@ -265,7 +282,7 @@ export default function WaveformDisplay({ version, isPlaying, analysis, selectio
       }
       if (drag.kind === 'select') {
         drag.moved = true;
-        setSel(drag.anchor, timeAt(localX(e)));
+        setSel(drag.anchor, snapTime(timeAt(localX(e)), e));
         return;
       }
       const dx = e.clientX - drag.x;
@@ -384,6 +401,16 @@ export default function WaveformDisplay({ version, isPlaying, analysis, selectio
           >
             Select loop
           </button>
+          {analysis && analysis.ok && (selectMode || selection) && (
+            <button
+              className={snapMode ? 'on' : ''}
+              onClick={() => setSnapMode((m) => !m)}
+              aria-pressed={snapMode}
+              title="When on, the edges of your loop jump to the nearest heartbeat start as you drag (hold Alt to place them freely)"
+            >
+              Snap to beats
+            </button>
+          )}
           {selection && <button onClick={handleToSelection} title="Zoom to the selected region">Show selection</button>}
           {selection && <button onClick={() => onSelection(null)} title="Remove the selection">Clear</button>}
           <button onClick={handleZoomOut} aria-label="Zoom out" title="Zoom out (−)">−</button>
@@ -403,7 +430,7 @@ export default function WaveformDisplay({ version, isPlaying, analysis, selectio
       </div>
       <p className="note">
         Click to move the playhead. Drag to move along. Pinch or Ctrl/⌘ + scroll to zoom. To pick your own
-        loop, turn on Select loop (or hold Shift) and drag across the part you want; drag its edges to adjust.
+        loop, turn on Select loop (or hold Shift) and drag across the part you want; drag its edges to adjust. With Snap to beats on, the edges jump to heartbeat starts (hold Alt to place them freely).
       </p>
     </div>
   );
