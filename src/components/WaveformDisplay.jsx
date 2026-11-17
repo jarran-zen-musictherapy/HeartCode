@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getAnalysisData, getCurrentTime, seek } from '../audio/engine.js';
 import { extractPeaks, fitCanvas, niceStep } from '../utils/canvas.js';
 
@@ -7,12 +7,23 @@ const RULER = 16;
 const MINI = 36;
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
-export default function WaveformDisplay({ version, isPlaying, analysis }) {
+export default function WaveformDisplay({ version, isPlaying, analysis, selection, onSelection }) {
   const canvasRef = useRef(null);
   const miniRef = useRef(null);
   const containerRef = useRef(null);
   const viewRef = useRef({ start: 0, end: 0, version: -1 }); // visible time range, kept across redraws
   const apiRef = useRef({});
+  const [selectMode, setSelectMode] = useState(false);
+  // Latest selection / mode / callback, readable from the long-lived pointer handlers.
+  const selRef = useRef(selection);
+  const modeRef = useRef(selectMode);
+  const onSelectionRef = useRef(onSelection);
+  useEffect(() => {
+    selRef.current = selection;
+    modeRef.current = selectMode;
+    onSelectionRef.current = onSelection;
+    apiRef.current.draw?.();
+  }, [selection, selectMode, onSelection]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -61,6 +72,20 @@ export default function WaveformDisplay({ version, isPlaying, analysis }) {
 
       ctx.fillStyle = '#1a1a2e';
       ctx.fillRect(0, 0, width, HEIGHT);
+
+      // Hand-drawn loop selection.
+      const sel = selRef.current;
+      if (sel) {
+        const x0 = clamp(xOf(sel.start), -2, width + 2);
+        const x1 = clamp(xOf(sel.end), -2, width + 2);
+        ctx.fillStyle = 'rgba(199, 146, 234, 0.2)';
+        ctx.fillRect(x0, plotTop, x1 - x0, plotH);
+        ctx.fillStyle = '#c792ea';
+        ctx.fillRect(x0 - 1, plotTop, 2, plotH);
+        ctx.fillRect(x1 - 1, plotTop, 2, plotH);
+        ctx.fillRect(x0 - 4, plotTop, 8, 10);
+        ctx.fillRect(x1 - 4, plotTop, 8, 10);
+      }
 
       // Time ruler.
       const step = niceStep((span / width) * 80);
@@ -169,6 +194,12 @@ export default function WaveformDisplay({ version, isPlaying, analysis }) {
       ctx.fillRect(x0, 0, Math.max(2, x1 - x0), MINI);
       ctx.strokeStyle = '#00d4ff';
       ctx.strokeRect(x0 + 0.5, 0.5, Math.max(2, x1 - x0) - 1, MINI - 1);
+      if (selRef.current) {
+        const sx0 = (selRef.current.start / duration) * width;
+        const sx1 = (selRef.current.end / duration) * width;
+        ctx.fillStyle = 'rgba(199, 146, 234, 0.45)';
+        ctx.fillRect(sx0, MINI - 5, Math.max(2, sx1 - sx0), 5);
+      }
       ctx.fillStyle = '#ffffff';
       ctx.fillRect((getCurrentTime() / duration) * width, 0, 1, MINI);
     }
@@ -199,12 +230,44 @@ export default function WaveformDisplay({ version, isPlaying, analysis }) {
 
     // --- Main canvas: click to move the playhead, drag to pan, pinch / ctrl+wheel to zoom.
     let drag = null;
+    const localX = (e) => e.clientX - canvas.getBoundingClientRect().left;
+    const setSel = (a, b) => {
+      selRef.current = { start: clamp(Math.min(a, b), 0, duration), end: clamp(Math.max(a, b), 0, duration) };
+      draw();
+    };
+    function edgeAt(x) {
+      const sel = selRef.current;
+      if (!sel) return null;
+      const span = view.end - view.start;
+      const xs = ((sel.start - view.start) / span) * width;
+      const xe = ((sel.end - view.start) / span) * width;
+      if (Math.abs(x - xe) <= 7) return 'end';
+      if (Math.abs(x - xs) <= 7) return 'start';
+      return null;
+    }
     function onDown(e) {
-      drag = { x: e.clientX, start: view.start, moved: false };
+      const x = localX(e);
+      const edge = edgeAt(x);
+      if (edge) {
+        const sel = selRef.current;
+        drag = { kind: 'select', anchor: edge === 'start' ? sel.end : sel.start };
+      } else if (e.shiftKey || modeRef.current) {
+        drag = { kind: 'select', anchor: timeAt(x), fresh: true };
+      } else {
+        drag = { kind: 'pan', x: e.clientX, start: view.start, moved: false };
+      }
       canvas.setPointerCapture(e.pointerId);
     }
     function onMove(e) {
-      if (!drag) return;
+      if (!drag) {
+        canvas.style.cursor = edgeAt(localX(e)) ? 'ew-resize' : '';
+        return;
+      }
+      if (drag.kind === 'select') {
+        drag.moved = true;
+        setSel(drag.anchor, timeAt(localX(e)));
+        return;
+      }
       const dx = e.clientX - drag.x;
       if (Math.abs(dx) > 4) drag.moved = true;
       if (drag.moved) {
@@ -213,8 +276,12 @@ export default function WaveformDisplay({ version, isPlaying, analysis }) {
       }
     }
     function onUp(e) {
-      if (drag && !drag.moved) {
-        seek(timeAt(e.clientX - canvas.getBoundingClientRect().left));
+      if (drag && drag.kind === 'select') {
+        const sel = selRef.current;
+        if (drag.moved && sel && sel.end - sel.start >= 0.05) onSelectionRef.current?.(sel);
+        else if (drag.fresh) { selRef.current = null; onSelectionRef.current?.(null); draw(); }
+      } else if (drag && !drag.moved) {
+        seek(timeAt(localX(e)));
         draw();
       }
       drag = null;
@@ -264,6 +331,13 @@ export default function WaveformDisplay({ version, isPlaying, analysis }) {
     mini.addEventListener('pointercancel', miniUp);
 
     apiRef.current = {
+      draw,
+      toSelection: () => {
+        const sel = selRef.current;
+        if (!sel) return;
+        const span = (sel.end - sel.start) * 1.3;
+        setView(sel.start - (span - (sel.end - sel.start)) / 2, span);
+      },
       zoomIn: () => zoom(2),
       zoomOut: () => zoom(0.5),
       fit: () => setView(0, duration),
@@ -290,6 +364,7 @@ export default function WaveformDisplay({ version, isPlaying, analysis }) {
   function handleZoomIn() { apiRef.current.zoomIn?.(); }
   function handleFit() { apiRef.current.fit?.(); }
   function handleToPlayhead() { apiRef.current.toPlayhead?.(); }
+  function handleToSelection() { apiRef.current.toSelection?.(); }
 
   return (
     <div className="waveform-display">
@@ -301,6 +376,16 @@ export default function WaveformDisplay({ version, isPlaying, analysis }) {
           </span>
         )}
         <span className="zoom-buttons">
+          <button
+            className={selectMode ? 'on' : ''}
+            onClick={() => setSelectMode((m) => !m)}
+            aria-pressed={selectMode}
+            title="When on, dragging on the waveform marks a loop region (or hold Shift and drag at any time)"
+          >
+            Select loop
+          </button>
+          {selection && <button onClick={handleToSelection} title="Zoom to the selected region">Show selection</button>}
+          {selection && <button onClick={() => onSelection(null)} title="Remove the selection">Clear</button>}
           <button onClick={handleZoomOut} aria-label="Zoom out" title="Zoom out (−)">−</button>
           <button onClick={handleZoomIn} aria-label="Zoom in" title="Zoom in (+)">+</button>
           <button onClick={handleFit} title="Show the whole recording (0)">Fit</button>
@@ -317,8 +402,8 @@ export default function WaveformDisplay({ version, isPlaying, analysis }) {
         <canvas ref={miniRef} className="wave-mini" aria-hidden="true" />
       </div>
       <p className="note">
-        Click to move the playhead. Drag to move along. Pinch or Ctrl/⌘ + scroll to zoom. The strip underneath
-        shows the whole recording: drag the blue box.
+        Click to move the playhead. Drag to move along. Pinch or Ctrl/⌘ + scroll to zoom. To pick your own
+        loop, turn on Select loop (or hold Shift) and drag across the part you want; drag its edges to adjust.
       </p>
     </div>
   );

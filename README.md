@@ -57,6 +57,9 @@ npm run build:standalone  # one HTML file that opens by double-click
   grid; only the quiet gap before the next beat is shortened or extended. S2
   keeps its natural distance from S1. The loop length is exact and the seam is
   crossfaded, so it loops cleanly in a DAW.
+* `src/analysis/manualloop.js` handles hand-picked loops: snapping a selection to whole
+  heartbeats and to the best-matching waveform position, building the loop with a
+  crossfaded seam, and the seam check shown in the app.
 * `src/analysis/resample.js` converts to the export rate (44.1 kHz by default)
   with a windowed-sinc filter. Upsampling a 4 kHz recording adds no detail above
   2 kHz; it only makes the file usable in a DAW.

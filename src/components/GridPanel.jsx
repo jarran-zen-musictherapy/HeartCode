@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { getAnalysisData, startPreview, stopPreview, onPreviewChange } from '../audio/engine.js';
 import { resample } from '../analysis/resample.js';
 import { gridWarp, sliceBeats, addClicks } from '../analysis/gridwarp.js';
+import { snapLoop, seamLoop, seamReport } from '../analysis/manualloop.js';
 import { encodeWav } from '../export/wavEncode.js';
 import { makeZip } from '../export/zip.js';
 import { makeMidi } from '../export/midi.js';
@@ -27,16 +28,21 @@ function download(data, name, type) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function GridPanel({ analysis, fileName, onPreviewChange: reportPreview }) {
-  const usable = analysis.beats.length - 1;
+export default function GridPanel({
+  analysis, fileName, selection, onSelection, onPreviewChange: reportPreview,
+}) {
+  // The panel also works when no heartbeat was found, for hand-picked loops.
+  const autoBpm = analysis.ok ? analysis.bpm : 60;
+  const humHz = analysis.hum || 0;
+  const usable = Math.max(0, analysis.beats.length - 1);
   const wholeBars = Math.floor(usable / 4) * 4;
 
-  const [bpmText, setBpmText] = useState(() => String(Math.round(analysis.bpm)));
+  const [bpmText, setBpmText] = useState(() => String(Math.round(autoBpm)));
   const bpmEdited = useRef(false);
   // Follow the analysed tempo (e.g. after Half/Double or Swap) until the user types their own.
   useEffect(() => {
-    if (!bpmEdited.current) setBpmText(String(Math.round(analysis.bpm)));
-  }, [analysis.bpm]);
+    if (!bpmEdited.current) setBpmText(String(Math.round(autoBpm)));
+  }, [autoBpm]);
   const [rate, setRate] = useState('44100');
   const [lengthMode, setLengthMode] = useState(wholeBars >= 4 ? 'bars' : 'all');
   const [eq, setEq] = useState(() => EQ_PRESETS.gentle.make());
@@ -47,6 +53,8 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
   const [bitDepth, setBitDepth] = useState(24);
   const [kbpsIndex, setKbpsIndex] = useState(MP3_BITRATES.indexOf(192));
   const [repeatsText, setRepeatsText] = useState('1');
+  const [sourceMode, setSourceMode] = useState('manual'); // which loop to use when a selection exists
+  const manual = Boolean(selection) && (sourceMode === 'manual' || !analysis.ok);
   const [level, setLevel] = useState({ autoGain: true, gainText: '0', limiterOn: true, ceilingText: '-1' });
   const [nudgeText, setNudgeText] = useState('0');
   const [clicks, setClicks] = useState(false);
@@ -68,9 +76,10 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
   const count = chosen[1];
   const gainDb = Math.max(-24, Math.min(60, Number(level.gainText) || 0));
   const ceilingDb = Math.max(-12, Math.min(0, Number.isFinite(Number(level.ceilingText)) && level.ceilingText !== '' ? Number(level.ceilingText) : -1));
-  const useHum = removeHum && analysis.hum > 0;
+  const useHum = removeHum && humHz > 0;
   // Everything that changes the rendered audio; a render is current only if its key matches.
-  const settingsKey = JSON.stringify([bpmText, count, rate, useHum, nudgeText, eq, level.autoGain, gainDb, level.limiterOn, ceilingDb, noise]);
+  const settingsKey = JSON.stringify([bpmText, count, rate, useHum, nudgeText, eq, level.autoGain, gainDb, level.limiterOn, ceilingDb, noise,
+    manual ? [selection.start, selection.end] : null]);
   const [namePrefix, setNamePrefix] = useState(() => fileName.replace(/\.[^.]+$/, ''));
   const base = useMemo(() => namePrefix.trim().replace(/[^\w.\- ]+/g, '_') || 'heartcode', [namePrefix]);
 
@@ -88,16 +97,16 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
   // Re-render the loop whenever a setting changes (debounced while typing or dragging).
   useEffect(() => {
     stopPreview();
-    if (!bpmValid || count < 1) return undefined;
+    if (!manual && (!bpmValid || count < 1)) return undefined;
     const id = setTimeout(() => {
       const data = getAnalysisData();
       if (!data) return;
       const outRate = rate === 'native' ? data.sampleRate : Number(rate);
       const cache = cacheRef.current;
-      const key = `${outRate}|${useHum ? analysis.hum : 0}`;
+      const key = `${outRate}|${useHum ? humHz : 0}`;
       if (cache.key !== key) {
         let base = resample(data.pcm, data.sampleRate, outRate);
-        if (useHum) base = Float32Array.from(notchHum(base, outRate, analysis.hum));
+        if (useHum) base = Float32Array.from(notchHum(base, outRate, humHz));
         cache.base = base;
         cache.spectrum = averageSpectrum(base, outRate);
         cache.key = key;
@@ -112,9 +121,32 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
       if (!cache.costs) cache.costs = beatCosts(data.pcm, data.sampleRate, analysis.beats);
       const opts = { bpm, count, nudge: nudgeMs / 1000, costs: cache.costs };
       const eqd = applyEq(cache.gated, outRate, eq);
-      const warped = gridWarp(eqd, outRate, analysis.beats, opts);
-      if (!warped) { setRender(null); return; }
-      const before = gridWarp(cache.base, outRate, analysis.beats, opts);
+      let warped;
+      let before;
+      if (manual) {
+        // The hand-picked region, as recorded, with a crossfaded seam.
+        const samples = seamLoop(eqd, outRate, selection.start, selection.end);
+        if (!samples) { setRender(null); return; }
+        const report = seamReport(data.pcm, data.sampleRate, analysis.beats, selection.start, selection.end);
+        const seconds = samples.length / outRate;
+        warped = {
+          samples,
+          sampleRate: outRate,
+          seconds,
+          beats: report.beats,
+          bpm: report.beats > 0 ? Math.round((report.beats * 600) / seconds) / 10 : 0,
+          firstBeat: Math.max(0, analysis.beats.findIndex((b) => b.s1Onset >= selection.start - 0.005)),
+          truncatedS2: 0,
+          irregular: 0,
+          manual: true,
+          report,
+        };
+        before = { samples: seamLoop(cache.base, outRate, selection.start, selection.end) };
+      } else {
+        warped = gridWarp(eqd, outRate, analysis.beats, opts);
+        if (!warped) { setRender(null); return; }
+        before = gridWarp(cache.base, outRate, analysis.beats, opts);
+      }
 
       // Level: gain, then the limiter as the last stage so the file never exceeds the ceiling.
       const peak = samplePeak(warped.samples);
@@ -141,7 +173,7 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [analysis, settingsKey]);
 
-  const fresh = Boolean(render) && bpmValid && render.key === settingsKey;
+  const fresh = Boolean(render) && (manual || bpmValid) && render.key === settingsKey;
 
   function togglePreview() {
     if (previewing) { stopPreview(); return; }
@@ -166,7 +198,9 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
       out = new Float32Array(render.samples.length * repeats);
       for (let r = 0; r < repeats; r++) out.set(render.samples, r * render.samples.length);
     }
-    const name = `${base}_${render.bpm}bpm_${render.beats * repeats}beats`;
+    const name = render.manual
+      ? `${base}_manual_${(render.seconds * repeats).toFixed(1)}s`
+      : `${base}_${render.bpm}bpm_${render.beats * repeats}beats`;
     if (format === 'mp3') {
       const src = mp3Rate === render.sampleRate ? out : resample(out, render.sampleRate, mp3Rate);
       download(encodeMp3(src, mp3Rate, kbps), `${name}.mp3`, 'audio/mpeg');
@@ -203,7 +237,14 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
     download(beatsCsv(analysis), `${base}_beats.csv`, 'text/csv');
   }
 
-  const stretch = bpmValid ? bpm / analysis.bpm : 1;
+  function snapSelection() {
+    const data = getAnalysisData();
+    if (!data || !selection) return;
+    const s = snapLoop(data.pcm, data.sampleRate, analysis.beats, selection.start, selection.end);
+    onSelection({ start: s.start, end: s.end });
+  }
+
+  const stretch = bpmValid ? bpm / autoBpm : 1;
 
   return (
     <>
@@ -217,7 +258,7 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         level={level}
         onLevel={setLevel}
         meters={fresh ? render.meters : null}
-        hum={analysis.hum}
+        hum={humHz}
         removeHum={removeHum}
         onRemoveHum={setRemoveHum}
         noise={noise}
@@ -225,17 +266,61 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
       />
     <div className="grid-panel">
       <h3 className="section-label">Grid &amp; Export</h3>
+      {selection ? (
+        <div className="manual-loop">
+          <div className="controls">
+            <label>
+              Loop from
+              <select value={manual ? 'manual' : 'auto'} onChange={(e) => setSourceMode(e.target.value)} disabled={!analysis.ok}>
+                <option value="manual">Your selection on the waveform</option>
+                <option value="auto">Automatic: beats on a tempo grid</option>
+              </select>
+            </label>
+            {manual && <button onClick={snapSelection}>Snap to a perfect loop</button>}
+          </div>
+          {manual && fresh && (
+            <>
+              <p className="note">
+                Your selection: {selection.start.toFixed(3)} s to {selection.end.toFixed(3)} s ({render.seconds.toFixed(3)} s long)
+                {render.beats > 0 ? `, ${render.beats} ${render.beats === 1 ? 'heartbeat' : 'heartbeats'}, about ${render.bpm} BPM as recorded` : ''}.
+                It plays at its recorded speed; tempo, loop length and nudge apply only to the automatic grid.
+              </p>
+              {render.report.smooth ? (
+                <p className="note seam-ok">
+                  Seam check: loops smoothly
+                  {render.report.wholeBeats ? ', on whole heartbeats' : ''} (match {(render.report.match * 100).toFixed(0)}%
+                  {render.report.quiet ? ', cuts in a quiet spot' : ''}).
+                </p>
+              ) : (
+                <p className="error-text">
+                  Seam check: this will probably bump or click where it repeats
+                  {render.report.quiet ? '' : ' (a cut lands on a heart sound)'}. Press Snap to a perfect loop.
+                </p>
+              )}
+              {render.report.smooth && !render.report.wholeBeats && analysis.ok && (
+                <p className="note">
+                  The ends are not on heartbeat starts, so the rhythm may stumble at the repeat. Snap fixes that.
+                </p>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        <p className="note">
+          Want to choose the loop yourself? Turn on Select loop above the waveform and drag across the part you want.
+        </p>
+      )}
       <div className="controls">
         <label>
           Tempo (BPM)
           <input
-            type="number" min="30" max="240" step="0.1" value={bpmText}
+            type="number" min="30" max="240" step="0.1" value={bpmText} disabled={manual}
             onChange={(e) => { bpmEdited.current = true; setBpmText(e.target.value); }}
           />
         </label>
         <label>
           Loop length
-          <select value={effectiveMode} onChange={(e) => setLengthMode(e.target.value)}>
+          <select value={effectiveMode} onChange={(e) => setLengthMode(e.target.value)} disabled={manual}>
             {lengthOptions.map(([id, , label]) => <option key={id} value={id}>{label}</option>)}
           </select>
         </label>
@@ -250,7 +335,7 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         <label title="Shift every heartbeat earlier (negative) or later (positive) against the grid">
           Nudge (ms)
           <input
-            type="number" min="-100" max="100" step="1" value={nudgeText}
+            type="number" min="-100" max="100" step="1" value={nudgeText} disabled={manual}
             onChange={(e) => setNudgeText(e.target.value)}
           />
         </label>
@@ -264,17 +349,17 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         </label>
       </div>
 
-      {!bpmValid && <p className="error-text">Enter a tempo between 30 and 240 BPM.</p>}
-      {fresh && (
+      {!manual && !bpmValid && <p className="error-text">Enter a tempo between 30 and 240 BPM.</p>}
+      {fresh && !manual && (
         <p className="note">
           {render.beats} {render.beats === 1 ? 'heartbeat' : 'heartbeats'}, one per beat at {render.bpm} BPM: {render.seconds.toFixed(3)} s loop,
           {' '}{(render.sampleRate / 1000).toFixed(1)} kHz mono. Each S1 sits on the grid; S2 keeps its
           natural timing.
         </p>
       )}
-      {fresh && (stretch > 1.25 || stretch < 0.7) && (
+      {fresh && !manual && (stretch > 1.25 || stretch < 0.7) && (
         <p className="note">
-          This tempo is far from the recorded {analysis.bpm.toFixed(0)} BPM, so the gaps between beats are
+          This tempo is far from the recorded {autoBpm.toFixed(0)} BPM, so the gaps between beats are
           {stretch > 1 ? ' cut short' : ' stretched out'} noticeably.
         </p>
       )}
@@ -342,9 +427,9 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
           {previewing ? 'Stop preview' : 'Preview loop'}
         </button>
         <button onClick={exportLoop} disabled={!fresh || tooLong}>Export loop (.{format})</button>
-        <button onClick={exportOneShots} disabled={!fresh}>Export one-shots (.zip)</button>
-        <button onClick={exportMidi} disabled={!fresh}>Export MIDI (.mid)</button>
-        <button onClick={exportCsv}>Export beat data (.csv)</button>
+        <button onClick={exportOneShots} disabled={!fresh || usable < 1}>Export one-shots (.zip)</button>
+        <button onClick={exportMidi} disabled={!fresh || manual} title={manual ? 'MIDI is for the automatic grid' : undefined}>Export MIDI (.mid)</button>
+        <button onClick={exportCsv} disabled={!analysis.ok}>Export beat data (.csv)</button>
       </div>
     </div>
     </>

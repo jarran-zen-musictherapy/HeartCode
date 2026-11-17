@@ -17,6 +17,7 @@ function App() {
   const [swapAnchor, setSwapAnchor] = useState(false);
   const [tempoFactor, setTempoFactor] = useState(1); // 1, 0.5 or 2: manual half/double override
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [selection, setSelection] = useState(null); // hand-picked loop region { start, end } in seconds
 
   // Keep the buttons honest when playback reaches the end by itself.
   useEffect(() => onEnded(() => setIsPlaying(false)), []);
@@ -38,6 +39,7 @@ function App() {
     setAnalysis(null);
     setSwapAnchor(false);
     setTempoFactor(1);
+    setSelection(null);
     setFileMeta(meta);
     setFileVersion((v) => v + 1);
   }
@@ -91,7 +93,13 @@ function App() {
       {fileMeta && (
         <>
           <TransportControls isPlaying={isPlaying} onPlayStateChange={setIsPlaying} />
-          <WaveformDisplay version={fileVersion} isPlaying={isPlaying} analysis={analysis} />
+          <WaveformDisplay
+            version={fileVersion}
+            isPlaying={isPlaying}
+            analysis={analysis}
+            selection={selection}
+            onSelection={setSelection}
+          />
           <AnalysisPanel
             analysis={analysis}
             swapAnchor={swapAnchor}
@@ -99,10 +107,12 @@ function App() {
             tempoFactor={tempoFactor}
             onTempoFactor={setTempoFactor}
           />
-          {analysis && analysis.ok && (
+          {analysis && (analysis.ok || selection) && (
             <GridPanel
               key={fileVersion}
               analysis={analysis}
+              selection={selection}
+              onSelection={setSelection}
               fileName={fileMeta.name}
               onPreviewChange={setIsPreviewing}
             />
