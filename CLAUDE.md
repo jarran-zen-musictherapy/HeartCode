@@ -23,7 +23,7 @@ Chain order (src/process/render.js): resample -> hum notch -> spectral noise rem
 
 - Analysis and rendering run in a worker (src/worker/: client.js talks to hc.worker.js; handler.js is the shared job code and the main-thread fallback). The worker is imported with `?worker&inline` so the single-file build works from file://. Render requests quote `analysis.id`; stale ones are refused.
 - Beat averaging (src/process/average.js) aligns and averages S1 and S2 separately, then the loop is built from repeats of that one beat. Spectral noise removal (src/process/denoise.js) learns its noise print from the gaps between beats.
-- Tempo check (checkTempo in detect.js): a "second sound" under 0.13 s after S1 is not S2; with one sound per beat, alternating loudness or gaps suggests Half. Suggestion only, never auto-applied.
+- Tempo check (checkTempo in detect.js): a "second sound" under 0.15 s after S1 is not S2; with one sound per beat, alternating loudness or gaps suggests Half. Suggestion only, never auto-applied.
 - Batch (BatchPanel.jsx + 'batch' job): cleanest 16 beats per file, zip with loops, beat CSVs and summary.csv.
 
 ## Known weak spots

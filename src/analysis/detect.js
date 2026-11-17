@@ -458,7 +458,7 @@ export function analyseHeartbeat(pcm, sampleRate, opts = {}) {
   };
 }
 
-const MIN_SYSTOLE_S = 0.13;
+const MIN_SYSTOLE_S = 0.15;
 
 /**
  * A second opinion on half/double tempo, from the sounds themselves.
@@ -470,7 +470,7 @@ const MIN_SYSTOLE_S = 0.13;
  */
 export function checkTempo(beats, medRR, paired) {
   if (paired) {
-    const d = beats.filter((b) => b.s2Onset !== null).map((b) => b.s2Onset - b.s1Onset);
+    const d = beats.filter((b) => b.s2 !== null).map((b) => b.s2 - b.s1);
     return { soundsPerBeat: 2, s1s2: d.length ? median(d) : null, alternating: false, suggest: null };
   }
   // Split into runs of steady beats; within each, compare every beat with the next.
