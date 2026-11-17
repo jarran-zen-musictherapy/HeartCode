@@ -148,6 +148,9 @@ export function scoreRecording(analysis, ref, cfg = CONFIG) {
   }
   row.nS1 = n1; row.nS2 = n2; row.orderOk = n1 > n2;
   row.tempoAmbiguous = Boolean(analysis.tempoAmbiguous);
+  row.anchor = analysis.ok ? analysis.anchorMethod : '';
+  // An S1/S2 swap is 'announced' when the tool says it could not tell the two sounds apart (loudness fallback).
+  row.silentSwap = Boolean(analysis.ok) && row.rateOk && !row.orderOk && analysis.anchorMethod !== 'loudness';
   row.regularity = analysis.ok ? analysis.regularity : null;
   row.coverage = analysis.ok ? analysis.coverage : null;
   row.reason = analysis.ok ? '' : analysis.reason || 'no heartbeat found';
@@ -155,10 +158,11 @@ export function scoreRecording(analysis, ref, cfg = CONFIG) {
 }
 
 // ---- pooled metrics and bootstrap ---------------------------------------------------------------------
-const zero = () => ({ n: 0, tp: 0, nRef: 0, nMark: 0, tp60: 0, nMark60: 0, rateOk: 0, octave: 0, silent: 0, orderOk: 0 });
+const zero = () => ({ n: 0, tp: 0, nRef: 0, nMark: 0, tp60: 0, nMark60: 0, rateOk: 0, octave: 0, silent: 0, orderOk: 0, okWarned: 0, silentSwap: 0 });
 function add(acc, r) {
   acc.n++; acc.tp += r.tp; acc.nRef += r.nRef; acc.nMark += r.nMark; acc.tp60 += r.tp60; acc.nMark60 += r.nMark60;
-  if (r.rateOk) { acc.rateOk++; if (r.orderOk) acc.orderOk++; }
+  if (r.rateOk) { acc.rateOk++; if (r.orderOk) acc.orderOk++; if (r.warned) acc.okWarned++; }
+  if (r.silentSwap) acc.silentSwap++;
   if (r.octave) acc.octave++;
   if (r.silentOctave) acc.silent++;
   return acc;
@@ -168,7 +172,7 @@ export function metrics(a) {
   return {
     n: a.n, sensitivity: a.nRef ? a.tp / a.nRef : 0, precision: a.nMark ? a.tp / a.nMark : 0, f1: f1(a.tp, a.nRef, a.nMark),
     f1_60ms: f1(a.tp60, a.nRef, a.nMark60), rateCorrect: a.n ? a.rateOk / a.n : 0, octave: a.n ? a.octave / a.n : 0,
-    silentOctave: a.n ? a.silent / a.n : 0, orderCorrect: a.rateOk ? a.orderOk / a.rateOk : 0, orderN: a.rateOk,
+    silentOctave: a.n ? a.silent / a.n : 0, falseAlarm: a.rateOk ? a.okWarned / a.rateOk : 0, silentSwap: a.n ? a.silentSwap / a.n : 0, orderCorrect: a.rateOk ? a.orderOk / a.rateOk : 0, orderN: a.rateOk,
   };
 }
 export function summarise(rows) { const a = zero(); for (const r of rows) add(a, r); return metrics(a); }
@@ -224,7 +228,8 @@ export function buildReport({ rows, excluded, ctx }) {
   out.push('', '## Detail', '');
   out.push(`- S1 sensitivity ${pct(m.sensitivity)}, precision ${pct(m.precision)}, F1 ${f3(m.f1)} at ${CONFIG.tolerance * 1000} ms; F1 ${f3(m.f1_60ms)} at ${CONFIG.strictTolerance * 1000} ms.`);
   out.push(`- Rate correct ${pct(m.rateCorrect)}; half or double ${pct(m.octave)} (of which silent, with no warning: ${pct(m.silentOctave)}).`);
-  out.push(`- S1/S2 order correct in ${pct(m.orderCorrect)} of the ${m.orderN} recordings with a correct rate.`);
+  out.push(`- S1/S2 order correct in ${pct(m.orderCorrect)} of the ${m.orderN} recordings with a correct rate. S1/S2 swaps the tool did not flag as uncertain (not the loudness fallback): ${pct(m.silentSwap)} of recordings.`);
+  out.push(`- Warning false-alarm rate: ${pct(m.falseAlarm)} of recordings with a correct rate still carry a warning. A warning that is almost always on protects nobody, so read the C4 result with this beside it.`);
   if (abs.length) out.push(`- Onset error on matched beats: median ${abs[Math.floor(abs.length / 2)].toFixed(1)} ms, 95th percentile ${abs[Math.floor(0.95 * (abs.length - 1))].toFixed(1)} ms, mean signed ${(errs.reduce((x, y) => x + y, 0) / errs.length).toFixed(1)} ms (positive = HeartCode later than the reference).`);
   out.push(`- Recordings where HeartCode found no heartbeat: ${rows.filter((r) => !r.analysed).length}.`, '');
   out.push('## Subgroups (descriptive, no pass/fail)', '');

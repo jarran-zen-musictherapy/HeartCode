@@ -56,9 +56,12 @@ test('scoring: a perfect detector scores 1, and each failure shows up where it s
   const perfect = scoreRecording(fakeAnalysis(REF_S1, 75), REF);
   assert.equal(perfect.tp, 7); assert.equal(perfect.fp, 0); assert.ok(perfect.rateOk && perfect.orderOk && !perfect.octave);
   assert.ok(perfect.errMs.every((e) => Math.abs(e) < 1e-6));
+  assert.equal(perfect.silentSwap, false);
   // markers on S2 instead: right count, wrong sound
   const onS2 = scoreRecording(fakeAnalysis(REF_S1.map((t) => t + 0.3), 75), REF);
   assert.equal(onS2.tp, 0); assert.equal(onS2.orderOk, false); assert.equal(onS2.nS2, 7);
+  assert.equal(onS2.silentSwap, true); // no loudness-fallback notice, so the swap was silent
+  assert.equal(scoreRecording(fakeAnalysis(REF_S1.map((t) => t + 0.3), 75, { anchorMethod: 'loudness' }), REF).silentSwap, false);
   // double rate with no warning is a SILENT octave error; with a warning it is not
   const dbl = [...REF_S1, ...REF_S1.map((t) => t + 0.4)].sort((a, b) => a - b);
   const silent = scoreRecording(fakeAnalysis(dbl, 150), REF);

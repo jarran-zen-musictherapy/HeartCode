@@ -25,3 +25,5 @@ dist-ssr
 
 # double-click build (npm run build:standalone)
 standalone
+
+validation-results/
