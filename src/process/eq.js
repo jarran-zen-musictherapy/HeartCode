@@ -34,6 +34,10 @@ export const EQ_PRESETS = {
     label: 'Gentle: cut rumble below 20 Hz',
     make: () => preset((eq) => { eq.lowCut.on = true; }),
   },
+  rumble: {
+    label: 'Rumble cut: remove below 40 Hz',
+    make: () => preset((eq) => { eq.lowCut = { on: true, freq: 40 }; }),
+  },
   heart: {
     label: 'Heart band: 25-400 Hz only',
     make: () => preset((eq) => {
