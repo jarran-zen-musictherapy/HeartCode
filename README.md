@@ -68,7 +68,10 @@ npm run build:standalone  # one HTML file that opens by double-click
   brickwall limiter as the last stage. Meters follow ITU-R BS.1770 (integrated LUFS
   with gating, true peak). The EQ runs as ordinary causal filters, so the curve on
   screen is exactly what is applied.
-* `src/export/` writes 24-bit WAV files, a plain zip for the one-shots, a MIDI file
+* `src/process/noise.js` is the noise reduction (a smooth gate that turns down the gaps
+  between heart sounds, set from each recording's own levels) and the per-beat
+  cleanliness score used by the "cleanest beats" loop options.
+* `src/export/` writes 24-bit WAV files, a plain zip for the one-shots, MP3 (via lamejs, LGPL-3.0), a MIDI file
   (S1 on C1 on every beat, S2 on D1 at its natural offset) and a beat-by-beat CSV.
 
 ## Development phases
@@ -88,3 +91,8 @@ npm run build:standalone  # one HTML file that opens by double-click
 * One tempo per recording: if the heart rate changes sharply mid-file, the median is reported.
 * Stereo files are mixed to mono as (L+R)/2; only the first two channels are read.
 * When S1 and S2 are equally spaced the tempo is ambiguous: the app flags it and offers Half/Double.
+
+## Third-party code
+
+MP3 export uses [@breezystack/lamejs](https://www.npmjs.com/package/@breezystack/lamejs)
+(a JavaScript port of LAME), licensed under LGPL-3.0.

@@ -452,3 +452,21 @@ button.secondary.inline {
   margin-top: 0;
   margin-left: auto;
 }
+
+.controls.export-format {
+  border-top: 1px solid #2a2a4e;
+  padding-top: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.controls input[type='range'] {
+  width: 10rem;
+  accent-color: #00d4ff;
+}
+
+.size-estimate {
+  font-size: 0.85rem;
+  color: #e0e0e0;
+  padding-bottom: 0.45rem;
+  font-variant-numeric: tabular-nums;
+}

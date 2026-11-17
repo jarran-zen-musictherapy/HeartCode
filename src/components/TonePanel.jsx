@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { EQ_LIMITS, EQ_PRESETS, eqResponseDb } from '../process/eq.js';
+import { NOISE_LEVELS } from '../process/noise.js';
 import { fitCanvas } from '../utils/canvas.js';
 
 const HEIGHT = 240;
@@ -30,7 +31,7 @@ function Meter({ label, peak, lufs }) {
 }
 
 export default function TonePanel({
-  eq, onEq, spectrum, sampleRate, view, onView, level, onLevel, meters, hum, removeHum, onRemoveHum,
+  eq, onEq, spectrum, sampleRate, view, onView, level, onLevel, meters, hum, removeHum, onRemoveHum, noise, onNoise,
 }) {
   const canvasRef = useRef(null);
   const containerRef = useRef(null);
@@ -236,6 +237,12 @@ export default function TonePanel({
           <select value="" onChange={(e) => e.target.value && onEq(EQ_PRESETS[e.target.value].make())}>
             <option value="">Choose…</option>
             {Object.entries(EQ_PRESETS).map(([id, p]) => <option key={id} value={id}>{p.label}</option>)}
+          </select>
+        </label>
+        <label title="Turns down the gaps between heart sounds, where hiss and room noise sit">
+          Noise reduction
+          <select value={noise} onChange={(e) => onNoise(e.target.value)}>
+            {Object.entries(NOISE_LEVELS).map(([id, n]) => <option key={id} value={id}>{n.label}</option>)}
           </select>
         </label>
         {hum > 0 && (

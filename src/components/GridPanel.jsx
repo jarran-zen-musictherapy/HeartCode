@@ -11,6 +11,8 @@ import { applyEq, EQ_PRESETS } from '../process/eq.js';
 import { limit, applyGain, samplePeak, dbToGain, gainToDb } from '../process/dynamics.js';
 import { integratedLufs, truePeakDb } from '../process/loudness.js';
 import { averageSpectrum } from '../process/spectrum.js';
+import { gateCurve, applyCurve, beatCosts, NOISE_LEVELS } from '../process/noise.js';
+import { encodeMp3, estimateSize, MP3_RATES, MP3_BITRATES } from '../export/mp3.js';
 import TonePanel from './TonePanel.jsx';
 import { median } from '../analysis/filters.js';
 
@@ -40,23 +42,35 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
   const [eq, setEq] = useState(() => EQ_PRESETS.gentle.make());
   const [removeHum, setRemoveHum] = useState(true);
   const [view, setView] = useState('post');
+  const [noise, setNoise] = useState('off');
+  const [format, setFormat] = useState('wav');
+  const [bitDepth, setBitDepth] = useState(24);
+  const [kbpsIndex, setKbpsIndex] = useState(MP3_BITRATES.indexOf(192));
+  const [repeatsText, setRepeatsText] = useState('1');
   const [level, setLevel] = useState({ autoGain: true, gainText: '0', limiterOn: true, ceilingText: '-1' });
   const [nudgeText, setNudgeText] = useState('0');
   const [clicks, setClicks] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [render, setRender] = useState(null);
-  const cacheRef = useRef({ key: '', base: null, spectrum: null });
+  const cacheRef = useRef({ key: '', base: null, spectrum: null, gateKey: '', gated: null, costs: null });
   const nudgeMs = Math.max(-100, Math.min(100, Number(nudgeText) || 0));
 
   const bpm = Number(bpmText);
   const bpmValid = Number.isFinite(bpm) && bpm >= 30 && bpm <= 240;
-  const effectiveMode = lengthMode === 'bars' && wholeBars >= 4 ? 'bars' : 'all';
-  const count = effectiveMode === 'bars' ? wholeBars : usable;
+  const lengthOptions = [];
+  if (wholeBars >= 4) lengthOptions.push(['bars', wholeBars, `${wholeBars} beats (whole bars of 4)`]);
+  lengthOptions.push(['all', usable, `${usable} beats (all)`]);
+  for (const n of [4, 2, 1]) {
+    if (n < usable) lengthOptions.push([`best${n}`, n, `Cleanest ${n === 1 ? 'single beat' : `${n} beats`}`]);
+  }
+  const chosen = lengthOptions.find(([id]) => id === lengthMode) || lengthOptions[0];
+  const effectiveMode = chosen[0];
+  const count = chosen[1];
   const gainDb = Math.max(-24, Math.min(60, Number(level.gainText) || 0));
   const ceilingDb = Math.max(-12, Math.min(0, Number.isFinite(Number(level.ceilingText)) && level.ceilingText !== '' ? Number(level.ceilingText) : -1));
   const useHum = removeHum && analysis.hum > 0;
   // Everything that changes the rendered audio; a render is current only if its key matches.
-  const settingsKey = JSON.stringify([bpmText, count, rate, useHum, nudgeText, eq, level.autoGain, gainDb, level.limiterOn, ceilingDb]);
+  const settingsKey = JSON.stringify([bpmText, count, rate, useHum, nudgeText, eq, level.autoGain, gainDb, level.limiterOn, ceilingDb, noise]);
   const [namePrefix, setNamePrefix] = useState(() => fileName.replace(/\.[^.]+$/, ''));
   const base = useMemo(() => namePrefix.trim().replace(/[^\w.\- ]+/g, '_') || 'heartcode', [namePrefix]);
 
@@ -67,6 +81,9 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
 
   // Stop any preview when this panel goes away (new file loaded).
   useEffect(() => () => { stopPreview(); reportPreview(false); }, [reportPreview]);
+
+  // Beat scores belong to one analysis; drop them when the markers change.
+  useEffect(() => { cacheRef.current.costs = null; cacheRef.current.gateKey = ''; }, [analysis]);
 
   // Re-render the loop whenever a setting changes (debounced while typing or dragging).
   useEffect(() => {
@@ -85,8 +102,16 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         cache.spectrum = averageSpectrum(base, outRate);
         cache.key = key;
       }
-      const opts = { bpm, count, nudge: nudgeMs / 1000 };
-      const eqd = applyEq(cache.base, outRate, eq);
+      // Noise reduction: turn the gaps between heart sounds down.
+      const gateKey = `${key}|${noise}`;
+      if (cache.gateKey !== gateKey) {
+        const curve = gateCurve(data.pcm, data.sampleRate, NOISE_LEVELS[noise].floorDb, analysis.beats);
+        cache.gated = applyCurve(cache.base, outRate, curve);
+        cache.gateKey = gateKey;
+      }
+      if (!cache.costs) cache.costs = beatCosts(data.pcm, data.sampleRate, analysis.beats);
+      const opts = { bpm, count, nudge: nudgeMs / 1000, costs: cache.costs };
+      const eqd = applyEq(cache.gated, outRate, eq);
       const warped = gridWarp(eqd, outRate, analysis.beats, opts);
       if (!warped) { setRender(null); return; }
       const before = gridWarp(cache.base, outRate, analysis.beats, opts);
@@ -124,9 +149,30 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
     startPreview(s, render.sampleRate);
   }
 
+  const repeats = Math.max(1, Math.min(500, Math.round(Number(repeatsText)) || 1));
+  const kbps = MP3_BITRATES[kbpsIndex];
+  // MP3 only exists at certain sample rates; a 4 kHz export is converted to 44.1 kHz.
+  const mp3Rate = render && MP3_RATES.includes(render.sampleRate) ? render.sampleRate : 44100;
+  const exportSeconds = render ? render.seconds * repeats : 0;
+  const sizeBytes = render
+    ? estimateSize(format, exportSeconds, { sampleRate: render.sampleRate, bitDepth, kbps })
+    : 0;
+  const sizeText = sizeBytes >= 1048576 ? `${(sizeBytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(sizeBytes / 1024))} KB`;
+  const tooLong = exportSeconds > 3600;
+
   function exportLoop() {
-    const wav = encodeWav(render.samples, render.sampleRate, 24);
-    download(wav, `${base}_${render.bpm}bpm_${render.beats}beats.wav`, 'audio/wav');
+    let out = render.samples;
+    if (repeats > 1) {
+      out = new Float32Array(render.samples.length * repeats);
+      for (let r = 0; r < repeats; r++) out.set(render.samples, r * render.samples.length);
+    }
+    const name = `${base}_${render.bpm}bpm_${render.beats * repeats}beats`;
+    if (format === 'mp3') {
+      const src = mp3Rate === render.sampleRate ? out : resample(out, render.sampleRate, mp3Rate);
+      download(encodeMp3(src, mp3Rate, kbps), `${name}.mp3`, 'audio/mpeg');
+    } else {
+      download(encodeWav(out, render.sampleRate, bitDepth), `${name}.wav`, 'audio/wav');
+    }
   }
 
   function exportOneShots() {
@@ -174,6 +220,8 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         hum={analysis.hum}
         removeHum={removeHum}
         onRemoveHum={setRemoveHum}
+        noise={noise}
+        onNoise={setNoise}
       />
     <div className="grid-panel">
       <h3 className="section-label">Grid &amp; Export</h3>
@@ -188,8 +236,7 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         <label>
           Loop length
           <select value={effectiveMode} onChange={(e) => setLengthMode(e.target.value)}>
-            {wholeBars >= 4 && <option value="bars">{wholeBars} beats (whole bars of 4)</option>}
-            <option value="all">{usable} beats (all)</option>
+            {lengthOptions.map(([id, , label]) => <option key={id} value={id}>{label}</option>)}
           </select>
         </label>
         <label>
@@ -220,8 +267,8 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
       {!bpmValid && <p className="error-text">Enter a tempo between 30 and 240 BPM.</p>}
       {fresh && (
         <p className="note">
-          {render.beats} heartbeats, one per beat at {render.bpm} BPM: {render.seconds.toFixed(3)} s loop,
-          {' '}{(render.sampleRate / 1000).toFixed(1)} kHz, 24-bit mono. Each S1 sits on the grid; S2 keeps its
+          {render.beats} {render.beats === 1 ? 'heartbeat' : 'heartbeats'}, one per beat at {render.bpm} BPM: {render.seconds.toFixed(3)} s loop,
+          {' '}{(render.sampleRate / 1000).toFixed(1)} kHz mono. Each S1 sits on the grid; S2 keeps its
           natural timing.
         </p>
       )}
@@ -245,11 +292,56 @@ export default function GridPanel({ analysis, fileName, onPreviewChange: reportP
         </p>
       )}
 
+      <div className="controls export-format">
+        <label>
+          Loop file format
+          <select value={format} onChange={(e) => setFormat(e.target.value)}>
+            <option value="wav">WAV (lossless, loops seamlessly)</option>
+            <option value="mp3">MP3 (smaller, for listening)</option>
+          </select>
+        </label>
+        {format === 'wav' ? (
+          <label>
+            Quality
+            <select value={bitDepth} onChange={(e) => setBitDepth(Number(e.target.value))}>
+              <option value={24}>24-bit (best)</option>
+              <option value={16}>16-bit (smaller)</option>
+            </select>
+          </label>
+        ) : (
+          <label>
+            Quality: {kbps} kbps
+            <input
+              type="range" min="0" max={MP3_BITRATES.length - 1} step="1" value={kbpsIndex}
+              onChange={(e) => setKbpsIndex(Number(e.target.value))}
+            />
+          </label>
+        )}
+        <label title="Play the loop this many times in the exported file">
+          Repeats
+          <input type="number" min="1" max="500" step="1" value={repeatsText} onChange={(e) => setRepeatsText(e.target.value)} />
+        </label>
+        {fresh && (
+          <span className="size-estimate">
+            About {sizeText}, {exportSeconds >= 60 ? `${Math.floor(exportSeconds / 60)} min ${Math.round(exportSeconds % 60)} s` : `${exportSeconds.toFixed(1)} s`}
+          </span>
+        )}
+      </div>
+      {format === 'mp3' && (
+        <p className="note">
+          MP3 files do not loop perfectly: the format adds a sliver of silence at the start and end, so a
+          looped MP3 clicks or gaps. Use WAV for anything you will loop, and MP3 for listening copies (set
+          Repeats to make it longer).
+          {fresh && mp3Rate !== render.sampleRate ? ` MP3 cannot store ${(render.sampleRate / 1000).toFixed(0)} kHz audio, so this export is converted to 44.1 kHz.` : ''}
+        </p>
+      )}
+      {tooLong && <p className="error-text">That is over an hour of audio. Lower Repeats to export.</p>}
+
       <div className="actions">
         <button onClick={togglePreview} disabled={!fresh}>
           {previewing ? 'Stop preview' : 'Preview loop'}
         </button>
-        <button onClick={exportLoop} disabled={!fresh}>Export loop (.wav)</button>
+        <button onClick={exportLoop} disabled={!fresh || tooLong}>Export loop (.{format})</button>
         <button onClick={exportOneShots} disabled={!fresh}>Export one-shots (.zip)</button>
         <button onClick={exportMidi} disabled={!fresh}>Export MIDI (.mid)</button>
         <button onClick={exportCsv}>Export beat data (.csv)</button>

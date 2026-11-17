@@ -12,20 +12,28 @@ const PRE_ROLL_S = 0.02; // audio kept before each S1 onset so the attack is int
 const XFADE_S = 0.005; // crossfade between neighbouring slices
 const S2_TAIL_S = 0.09; // S2 peak to the end of the S2 sound
 
-/** How many beats can be placed, and which run of beats is the most even. */
-export function chooseBeats(beats, count) {
+/**
+ * How many beats can be placed, and which run of consecutive beats to use.
+ * With `costs` (one per usable beat, lower = cleaner) the cleanest run wins;
+ * without, the run with the most even beat lengths.
+ */
+export function chooseBeats(beats, count, costs = null) {
   const usable = beats.length - 1; // each slice needs the next onset as its end
   const n = Math.max(0, Math.min(count, usable));
   if (n < 1) return { start: 0, count: 0 };
-  const len = [];
-  for (let k = 0; k < usable; k++) len.push(beats[k + 1].s1Onset - beats[k].s1Onset);
-  const med = median(len);
+  let cost = costs && costs.length >= usable ? costs : null;
+  if (!cost) {
+    const len = [];
+    for (let k = 0; k < usable; k++) len.push(beats[k + 1].s1Onset - beats[k].s1Onset);
+    const med = median(len);
+    cost = len.map((v) => Math.abs(v - med));
+  }
   let best = 0;
   let bestCost = Infinity;
   for (let s = 0; s + n <= usable; s++) {
-    let cost = 0;
-    for (let k = s; k < s + n; k++) cost += Math.abs(len[k] - med);
-    if (cost < bestCost - 1e-9) { bestCost = cost; best = s; }
+    let sum = 0;
+    for (let k = s; k < s + n; k++) sum += cost[k];
+    if (sum < bestCost - 1e-9) { bestCost = sum; best = s; }
   }
   return { start: best, count: n };
 }
@@ -35,11 +43,12 @@ export function chooseBeats(beats, count) {
  * @param {Float32Array} x samples
  * @param {number} fs sample rate of x
  * @param {Array} beats analysis.beats
- * @param {{ bpm: number, count: number, nudge?: number }} opts nudge: seconds to shift every
- *   heartbeat relative to the grid (positive = later)
+ * @param {{ bpm: number, count: number, nudge?: number, costs?: number[] }} opts nudge: seconds
+ *   to shift every heartbeat relative to the grid (positive = later); costs: per-beat
+ *   cleanliness scores, used to pick which beats go in the loop
  */
-export function gridWarp(x, fs, beats, { bpm, count, nudge = 0 }) {
-  const { start, count: n } = chooseBeats(beats, count);
+export function gridWarp(x, fs, beats, { bpm, count, nudge = 0, costs = null }) {
+  const { start, count: n } = chooseBeats(beats, count, costs);
   if (n < 1 || !(bpm > 0)) return null;
 
   const pre = Math.round(PRE_ROLL_S * fs);
